@@ -29,23 +29,22 @@ echo "   WLAN     : $SSID"
 echo "   Mac      : $HOST ($IFACE, $MAC)"
 
 echo "== WLAN-Passwort besorgen =="
-PASS=""
-# 1) Schlüsselbund. macOS zeigt dabei einen Freigabe-Dialog (Passwort oder Touch ID).
-for query in "-D AirPort network password -a $SSID" "-s AirPort -a $SSID" "-a $SSID"; do
-  # shellcheck disable=SC2086
-  OUT=$(security find-generic-password $query -w 2>&1)
-  if [ $? -eq 0 ] && [ -n "$OUT" ]; then PASS="$OUT"; echo "   aus dem Schlüsselbund gelesen."; break; fi
-done
-# 2) System-Schlüsselbund mit sudo, falls sudo gerade ohne Nachfrage darf.
-if [ -z "$PASS" ]; then
-  OUT=$(sudo -n security find-generic-password -a "$SSID" -w /Library/Keychains/System.keychain 2>/dev/null)
-  [ -n "$OUT" ] && { PASS="$OUT"; echo "   aus dem System-Schlüsselbund gelesen."; }
-fi
-# 3) Von Hand. Funktioniert immer.
-if [ -z "$PASS" ]; then
-  echo "   Schlüsselbund hat nichts geliefert (kein Eintrag oder Freigabe abgelehnt)."
-  read -rsp "   WLAN-Passwort für \"$SSID\" eingeben: " PASS
-  echo
+# WLAN-Passwoerter liegen im System-Schluesselbund. Beim Lesen zeigt macOS einen
+# Freigabe-Dialog (Touch ID oder Passwort) – das braucht kein sudo und kein Terminal.
+SYS_KC=/Library/Keychains/System.keychain
+PASS=$(security find-generic-password -D "AirPort network password" -a "$SSID" -w "$SYS_KC" 2>/dev/null)
+[ -n "$PASS" ] || PASS=$(security find-generic-password -s "AirPort" -a "$SSID" -w "$SYS_KC" 2>/dev/null)
+[ -n "$PASS" ] || PASS=$(security find-generic-password -a "$SSID" -w "$SYS_KC" 2>/dev/null)
+
+if [ -n "$PASS" ]; then
+  echo "   aus dem Schlüsselbund gelesen."
+else
+  # Fallback: Eingabefenster von macOS. Funktioniert auch ohne Terminal-Eingabe.
+  echo "   Schlüsselbund hat nichts geliefert – es öffnet sich ein Eingabefenster."
+  SSID_ESC=${SSID//\\/\\\\}; SSID_ESC=${SSID_ESC//\"/\\\"}
+  PASS=$(osascript \
+    -e "display dialog \"WLAN-Passwort für $SSID_ESC\" default answer \"\" with hidden answer with title \"ooo einrichten\"" \
+    -e "text returned of result" 2>/dev/null)
 fi
 [ -n "$PASS" ] || { echo "❌ Ohne Passwort geht es nicht."; exit 1; }
 
@@ -59,13 +58,13 @@ else
 fi
 
 echo "== Mac fürs Aufwecken vorbereiten =="
+# Auch hier per macOS-Dialog, damit es ohne Terminal-Eingabe funktioniert.
 if sudo -n pmset -a womp 1 2>/dev/null; then
   echo "   Wake-on-LAN aktiviert."
-elif sudo pmset -a womp 1 2>/dev/null; then
+elif osascript -e 'do shell script "pmset -a womp 1" with administrator privileges' >/dev/null 2>&1; then
   echo "   Wake-on-LAN aktiviert."
 else
-  echo "   ⚠️  Konnte Wake-on-LAN nicht setzen (sudo brauchte eine Eingabe)."
-  echo "      Bitte einmal selbst ausführen:  sudo pmset -a womp 1"
+  echo "   ⚠️  Wake-on-LAN nicht gesetzt. Bitte einmal selbst ausführen:  sudo pmset -a womp 1"
 fi
 
 echo
