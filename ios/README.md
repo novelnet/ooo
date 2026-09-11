@@ -1,23 +1,34 @@
-# ios – Vom iPhone aus
+# ios – Vom Handy aus
 
-## Kurzbefehl „Mac wecken“ (2 Minuten)
+## Claude-App (empfohlen)
 
-1. Kurzbefehle-App → „+“ → Name **Mac wecken**
-2. Aktion **„Inhalt von URL abrufen“**
-   - URL: `https://<ref>.supabase.co/functions/v1/ooo/wake`
+Der Server bringt einen MCP-Zugang mit. In der Claude-App heißt das **Connector**.
+
+1. Einstellungen → Connectors → **Add custom connector**
+2. Name: `ooo`
+3. Adresse: `https://ooo.novelnet.deno.net/mcp/<user-token>`
+   Den Schlüssel aus 1Password holen: `op read op://Personal/ooo/tokens/user`
+4. Speichern, dann im Chat über das Werkzeug-Symbol aktivieren.
+
+Danach genügt „Weck meinen Mac auf" oder „Ist mein Mac wach?".
+
+Connectors können keine getrennten Kopfzeilen mitschicken, deshalb steht der Schlüssel in der
+Adresse. **Behandle diese Adresse wie ein Passwort.** Wer sie kennt, kann den Mac wecken und den
+Status abfragen – mehr nicht; anmelden kann sich damit niemand.
+
+## Kurzbefehl (ohne Claude)
+
+1. Kurzbefehle-App → „+" → Name **Mac wecken**
+2. Aktion **„Inhalt von URL abrufen"**
+   - URL: `https://ooo.novelnet.deno.net/wake`
    - Methode: **POST**
-   - Header: `Authorization` = `Bearer <user-token aus 1Password: op://Dev/ooo/tokens/user>`
-3. Aktion **„Mitteilung anzeigen“** mit dem Ergebnis
-4. Zum Home-Bildschirm hinzufügen und/oder per Siri: „Hey Siri, Mac wecken“
+   - Header: `Authorization` = `Bearer <user-token>`
+3. Aktion **„Mitteilung anzeigen"** mit dem Ergebnis
+4. Zum Home-Bildschirm hinzufügen, oder per Siri: „Hey Siri, Mac wecken"
 
-Zweiter Kurzbefehl **Mac Status** genauso mit `GET …/ooo/status`.
-
-Der User-Token kann nur wecken und Status abfragen – das ist bewusst so, damit ein
-Kurzbefehl in iCloud kein größeres Risiko ist. Bei Verdacht: Token in 1Password neu
-generieren, `scripts/secrets.sh push`, Kurzbefehl anpassen.
+Ein zweiter Kurzbefehl **Mac Status** genauso mit `GET …/status`.
 
 ## Danach weiterarbeiten
 
 Auf dem Mac läuft `claude remote-control`; die Session erscheint in der Claude-App bzw. auf
-claude.ai/code. Mehr braucht es für KI-Arbeit vom Handy nicht. Bildschirm sehen (VNC) und
-Terminal (SSH) sind Optionen für später, nicht Teil von v1.
+claude.ai/code. Mehr braucht es für KI-Arbeit vom Handy nicht.

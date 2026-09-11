@@ -10,7 +10,7 @@ im Betrieb ohnehin wach (Amphetamine, Sessions). Preis: WoL über WLAN braucht b
 Bonjour Sleep Proxy oder Ethernet; falls das im Alltag nicht reicht, ist das Relais mit einem Flag da.
 (Ursprünglich war (b) primär geplant, wurde am 2026-09-11 als zu viel verworfen.)
 
-## 2. Supabase Edge Function als Relay
+## 2. Supabase Edge Function als Relay  — überholt durch [15](#15-deno-deploy-statt-supabase)
 **Optionen:** Supabase, Vercel Function + Redis, Cloudflare Worker + KV, MQTT-Broker.
 **Entscheidung:** Supabase.
 **Warum:** War im Planungsgespräch schon gesetzt; CLI ist installiert; Tabelle + Funktion in
@@ -39,7 +39,7 @@ für den Schlüsselbund.
 **Warum:** Null Setup auf dem Mac, kein dritter Token, kein LaunchAgent. mDNS + Ping im LAN
 reicht als „wach/schläft“.
 
-## 5. Root-CA gepinnt statt `setInsecure()`
+## 5. Root-CA gepinnt statt `setInsecure()`  — gilt weiter, Zielhost seit [15](#15-deno-deploy-statt-supabase) `deno.net`
 **Warum:** Ein MITM im Heimnetz könnte sonst Kommandos unterschieben. ISRG Root X1 gilt bis
 2035; sollte Supabase die CA wechseln, ist ein Header-Update nötig (steht im Firmware-Log als TLS-Fehler).
 

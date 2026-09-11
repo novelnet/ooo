@@ -1,4 +1,8 @@
-# Planungsnotizen (Stand vor diesem Repo)
+# Planungsnotizen (historisch, Stand vor diesem Repo)
+
+> Diese Datei hält den Ausgangspunkt fest und wird **nicht** nachgeführt.
+> Der aktuelle Aufbau steht in [`architecture.md`](architecture.md), die Begründungen
+> in [`decisions.md`](decisions.md).
 
 Zusammenfassung des Gesprächs, das zu `ooo` geführt hat – als Kontext für spätere Arbeit.
 

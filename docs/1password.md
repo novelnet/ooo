@@ -25,12 +25,15 @@ op inject -i .env.tpl -o .env            # einmal rendern
 op run --env-file=.env.tpl -- npm run dev # oder: Secrets nur als Prozess-Umgebung, keine Datei
 ```
 
-Für ooo: `scripts/secrets.sh init|render|push`. Item-Layout:
+Für ooo: `scripts/secrets.sh init|render|push`. Felder:
 
 ```
-op://Personal/ooo/supabase/project-ref
-op://Personal/ooo/tokens/user          (Handy-Kurzbefehl)
-op://Personal/ooo/tokens/device        (ESP32)
+op://Personal/ooo/tokens/user          Handy, Claude-Connector, CLI
+op://Personal/ooo/tokens/device        ESP32
+op://Personal/ooo/deno/deploy-token    Veröffentlichen auf Deno Deploy
+op://Personal/ooo/deno/org             novelnet
+op://Personal/ooo/deno/app             ooo
+op://Personal/ooo/deno/url             https://ooo.novelnet.deno.net
 ```
 
 ## 3. Headless: Service Account statt Touch ID

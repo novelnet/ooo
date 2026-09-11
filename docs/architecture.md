@@ -1,45 +1,67 @@
 # Architektur
 
-Ein zugeklapptes MacBook soll von unterwegs aufwachen. Danach hält Arbeit (Amphetamine,
-SSH, Claude Code Remote Control) es wach; das ist nicht Aufgabe von ooo.
+Ein schlafendes MacBook soll von unterwegs aufwachen – vom Handy oder von Claude aus.
+Wachhalten ist nicht Aufgabe von ooo, das erledigt die Arbeit selbst (Amphetamine, offene
+Sitzungen).
 
-## Ablauf „Mac wecken“
+```
+ iPhone ──POST /wake──┐
+                      ├─▶ Deno Deploy „ooo" ◀──wartet── ESP32 (im selben WLAN wie der Mac)
+ Claude ──MCP wake_mac┘        Deno KV                   │ Magic Packet + Ping
+                                                         ▼
+                                                      MacBook
+```
 
-1. Handy → `POST /wake` → Zeile in `ooo_commands`.
-2. ESP32 hängt in `POST /poll` (bis 25 s). `kv.watch` weckt den Server, sobald der Befehl da ist; gemessene Latenz unter 1 s.
-3. ESP32 prüft per mDNS + Ping, ob der Mac schon wach ist. Wenn nicht: 5 Magic Packets an
-   die gelernte MAC-Adresse, dann bis 45 s auf Ping-Antwort warten.
-4. `POST /ack` mit `mac-up`, `already-awake` oder `no-ping-response`.
-5. `/status` zeigt bei jedem Poll den aktuellen Ping-Stand als `mac.awake`.
+## Ablauf „Mac wecken"
+
+1. Handy oder Claude legt einen Befehl ab (`POST /wake` bzw. MCP-Werkzeug `wake_mac`).
+2. Der ESP32 wartet bereits in `POST /poll` (bis 25 s). `kv.watch` weckt den Server in dem
+   Moment, in dem der Befehl eintrifft – gemessene Latenz unter einer Sekunde.
+3. Der ESP32 prüft per mDNS und Ping, ob der Mac schon wach ist. Wenn nicht: fünf Runden
+   Magic Packets an alle für dieses Netz bekannten Adressen, dann bis 45 s auf Antwort warten.
+4. `POST /ack` meldet `mac-up`, `already-awake` oder `no-ping-response`.
+5. `GET /status` zeigt den bei jedem Durchgang aktualisierten Ping-Stand als `mac.awake`.
 
 ## Warum so
 
-- **Briefkasten statt Port-Freigabe:** Der ESP32 baut nur ausgehende Verbindungen auf, Handy und
-  Claude legen Befehle ab. Funktioniert aus Mobilfunk mit CGNAT.
-- **Deno Deploy statt Supabase:** siehe Entscheidung 15. Kostenlos, kein Server, kein Datenbankschema.
-- **MCP eingebaut:** Claude kann den Mac über das Werkzeug `wake_mac` selbst wecken.
-- **Status per Ping vom ESP32:** Auf dem Mac läuft nichts. Schläft er, scheitert schon die
-  mDNS-Auflösung, das ist die Antwort.
-- **Keine Konfiguration von Hand:** Der Mac schickt WLAN-Zugangsdaten, seinen Namen und seine
-  MAC-Adresse über das USB-Kabel an den ESP32 (`mac/setup.sh`), der speichert sie im Flash.
-  Wechselt der Mac später das Interface, frischt der ESP32 die MAC-Adresse per ARP selbst auf.
-  Nur URL + Device-Token werden beim Flashen aus 1Password gerendert.
-- **Relais nur optional:** `RELAY_ENABLED true` schaltet zusätzlich das Netzteil aus/an
-  (weckt Apple Silicon immer, auch ohne Ethernet). Standard ist aus, siehe `docs/hardware.md`.
+- **Briefkasten statt Port-Freigabe.** Der ESP32 baut nur ausgehende Verbindungen auf, Handy
+  und Claude legen Befehle ab. Funktioniert aus dem Mobilfunk, auch hinter CGNAT.
+- **Deno Deploy statt eines eigenen Servers** (Entscheidung 15): kostenlos, kein Datenbankschema,
+  und `kv.watch` macht das Warten ohne Rechenzeit.
+- **MCP ist eine Route derselben Anwendung** (Entscheidung 16). Claude bekommt die Werkzeuge
+  `wake_mac` und `mac_status`, ohne zusätzliche Infrastruktur.
+- **Status per Ping vom ESP32.** Auf dem Mac läuft dafür nichts. Schläft er, scheitert schon die
+  mDNS-Auflösung – das ist die Antwort.
+- **Nichts von Hand konfigurieren.** Der Mac schickt WLAN-Zugangsdaten, seinen Namen und seine
+  tatsächlich benutzte Netzwerkadresse über das USB-Kabel (`mac/setup.sh`). Beim Flashen kommen
+  nur Server-Adresse und Geräteschlüssel aus 1Password.
+- **Unterwegs tauglich.** Der ESP32 kennt bis zu acht Netze und nimmt das stärkste. Ein
+  Hintergrunddienst auf dem Mac erkennt Netzwechsel und schiebt neue Zugangsdaten nach
+  (Entscheidung 17). Empfohlen: ESP32 bleibt am USB-Anschluss des MacBooks stecken.
+- **Relais nur optional.** `RELAY_ENABLED true` schaltet zusätzlich das Netzteil aus und an;
+  das weckt Apple Silicon immer, auch ohne Ethernet. Standard ist aus, siehe `hardware.md`.
 
 ## Sicherheit
 
-| Wer | Token | darf |
+| Wer | Schlüssel | darf |
 |---|---|---|
-| Handy | `user` | wecken, Status lesen, Relais schalten |
-| ESP32 | `device` | Kommandos abholen und bestätigen |
+| Handy, Claude, CLI | `user` | wecken, Status lesen, Relais schalten, MCP nutzen |
+| ESP32 | `device` | Befehle abholen und bestätigen |
 
-Tokens 32 Byte zufällig, Vergleich über SHA-256, Verwaltung in 1Password. Tabellen mit RLS ohne
-Policies (nur Service Role). ESP32 spricht TLS mit gepinnter Root-CA. Schlimmster Fall bei
-geleaktem User-Token: jemand weckt den Mac. Der bleibt hinter FileVault, Login und Tailscale.
+Beide Schlüssel sind 32 Byte Zufall, liegen in 1Password und werden über SHA-256 verglichen,
+damit die Prüfdauer nichts verrät. Der Zustand liegt in Deno KV, erreichbar nur über die
+Anwendung. Der ESP32 spricht TLS mit gepinnten Wurzelzertifikaten (ISRG X1 und X2), kein
+`setInsecure()`.
+
+Schlimmster Fall bei einem geleakten `user`-Schlüssel: Jemand weckt den Mac oder liest, ob er
+wach ist. Der Mac selbst bleibt hinter FileVault und Anmeldung. Die Adresse des
+Claude-Connectors enthält diesen Schlüssel – deshalb gehört sie behandelt wie ein Passwort und
+niemals ins Repository.
 
 ## Grenzen
 
-- **WoL über WLAN:** Apple weckt nur über Bonjour Sleep Proxy (Apple TV/HomePod) oder Ethernet.
-- **Kaltstart mit FileVault** endet am Pre-Boot-Login → nie ausschalten.
-- **Touch ID** gibt es remote nicht → `docs/1password.md`.
+- **Wake-on-LAN über reines WLAN weckt Apple-Macs nicht.** Es braucht einen Bonjour Sleep Proxy
+  im Netz (Apple TV, HomePod) oder einen Ethernet-Adapter am Mac.
+- **Der ESP32 kann nur 2,4 GHz.** Netze, die ausschließlich auf 5 GHz funken, sieht er nicht.
+- **Kaltstart mit FileVault** endet am Pre-Boot-Login. Deshalb: nie ausschalten, nur schlafen.
+- **Touch ID gibt es aus der Ferne nicht** → `1password.md`.

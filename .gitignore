@@ -1,16 +1,10 @@
-# secrets (generated from 1Password templates, never committed)
-.env
-.env.*
-!.env.tpl
+# Secrets (aus 1Password gerendert, nie committen)
 firmware/include/secrets.h
 
-# tooling
+# Werkzeuge
 .idea/
+.mcp.json
+.playwright-mcp/
 .DS_Store
 .pio/
 node_modules/
-api/supabase/.temp/
-api/supabase/.branches/
-
-# IDE-lokal
-.mcp.json
