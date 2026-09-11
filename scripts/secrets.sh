@@ -7,9 +7,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VAULT="${OOO_VAULT:-Dev}"; ITEM="ooo"
 ACCOUNT="${OOO_OP_ACCOUNT:-my.1password.com}"   # es sind mehrere Konten registriert
-op() { command op --account "$ACCOUNT" "$@"; }
 
-command -v op >/dev/null || { echo "1Password CLI fehlt:  brew install --cask 1password-cli"; exit 1; }
+type -P op >/dev/null || { echo "1Password CLI fehlt:  brew install --cask 1password-cli"; exit 1; }
+op() { command op --account "$ACCOUNT" "$@"; }
 op whoami >/dev/null 2>&1 || {
   echo "1Password ist nicht angemeldet. App entsperren, dann:  op signin --account $ACCOUNT"
   echo "(Einstellungen → Entwickler → 'Mit 1Password-CLI integrieren' muss an sein.)"
