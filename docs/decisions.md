@@ -107,3 +107,16 @@ Internet – Briefkastendienste wie ntfy oder Upstash können das nicht. Deshalb
 weitere Route derselben Anwendung, rund 60 Zeilen, ohne zusätzliche Abhängigkeit.
 **Anmeldung:** Bearer-Schlüssel im Kopf der Anfrage (Claude Code) oder im Pfad `/mcp/<token>`
 für Clients, die keine Kopfzeilen mitschicken können.
+
+## 17. Mehrere Netze und automatische Nachführung
+**Anforderung (2026-09-11):** "unabhängig vom wifi ob hotspot etc" und "ist aber dynamisch,
+immer wieder neue netze".
+**Entscheidung:** Der ESP32 merkt sich bis zu acht Netze samt der je Netz gelernten
+MAC-Adresse des Macs und nimmt beim Start das stärkste bekannte. Zusätzlich hält ein
+Hintergrunddienst auf dem Mac ihn aktuell: Er erkennt einen Netzwechsel am Standard-Gateway
+plus dessen MAC-Adresse (der WLAN-Name ist ohne Ortungsdienste-Berechtigung nicht lesbar) und
+überträgt dann die Zugangsdaten des neuen Netzes.
+**Empfohlener Aufbau:** ESP32 bleibt am USB-Anschluss des MacBooks – er reist mit, bekommt im
+Schlaf weiter Strom und ist damit immer im selben Netz wie der Mac.
+**Warum die MAC-Adresse je Netz:** macOS vergibt pro WLAN eine eigene private Adresse. Gemessen:
+Hardware `f4:d4:88:84:76:a6`, im Hotspot `12:ac:41:9b:31:54`, im Heimnetz `86:83:c3:fa:70:58`.

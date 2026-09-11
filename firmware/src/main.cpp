@@ -1,11 +1,12 @@
 // ooo – ESP32 Wake-Trigger
 //
 // Einrichten: ESP32 per USB an den Mac stecken und dort `bash mac/setup.sh` laufen lassen.
-// Der Mac schickt WLAN-Zugangsdaten, seinen Namen und seine MAC-Adresse über das USB-Kabel.
-// Danach merkt sich der ESP32 alles (Flash) und braucht den Mac nie wieder zum Starten.
+// Der Mac schickt alle WLANs, die er kennt und die der ESP32 sieht, dazu seinen Namen.
+// Der ESP32 merkt sich bis zu MAX_NETS Netze und nimmt beim Start das staerkste bekannte.
+// Damit funktioniert er zu Hause, im Buero und am iPhone-Hotspot, ohne erneutes Einrichten.
 //
-// Im Betrieb: pollt die ooo-Edge-Function (Long-Poll, TLS mit gepinnter Root-CA) und weckt
-// den Mac per Wake-on-LAN. Bei jedem Poll pingt er den Mac und meldet das Ergebnis mit.
+// Im Betrieb: wartet an der ooo-Cloud auf Befehle (TLS mit gepinnter Root-CA) und weckt den
+// Mac per Wake-on-LAN. Bei jedem Durchgang pingt er den Mac und meldet das Ergebnis mit.
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -26,35 +27,39 @@
 #include "isrg_roots.h"
 
 static Preferences g_prefs;
-static String   g_ssid, g_pass, g_host;
-static uint8_t  g_macAddr[6] = {0};
-static bool     g_haveMac = false;
+
+// Mehrere bekannte Netze. Die MAC-Adresse des Macs wird je Netz gemerkt, weil macOS
+// pro WLAN eine andere (private) Adresse benutzt.
+struct Net {
+  String  ssid;
+  String  pass;
+  uint8_t mac[6];
+  bool    haveMac;
+};
+static Net      g_nets[MAX_NETS];
+static int      g_netCount = 0;
+static int      g_current = -1;          // Index des verbundenen Netzes
+static String   g_host;                  // Name des Macs, fuer mDNS
 static bool     g_macReachable = false;
 static bool     g_powered = true;
 static uint32_t g_lastOkMs = 0;
 static uint32_t g_backoffMs = BACKOFF_MIN_MS;
+static uint8_t  g_lastDisconnectReason = 0;
 
 // ---------------------------------------------------------------------------
-// LED. Die rote LED des DevKits haengt fest am Strom und leuchtet immer; steuerbar ist
-// nur die blaue an GPIO 2. Deshalb: blau aus = nur rot sichtbar = noch nicht bereit.
-//
-//   nur rot (blau aus)   wartet auf Einrichtung per USB
-//   blau blinkt          arbeitet gerade (verbindet, weckt den Mac)
-//   blau dauerhaft an    bereit und verbunden
-//   blau Doppelblitz     Fehler (WLAN falsch oder Relay nicht erreichbar)
+// LED:  aus = nicht bereit · blinkt = arbeitet · an = bereit · Doppelblitz = Fehler
+// (Die rote LED des DevKits haengt fest am Strom und ist nicht schaltbar.)
 // ---------------------------------------------------------------------------
 enum LedMode { LED_IDLE, LED_WORKING, LED_READY, LED_ERROR };
 static LedMode g_led = LED_IDLE;
-
 static void ledMode(LedMode m) { g_led = m; }
-
 static void ledTick() {
   bool on = false;
   switch (g_led) {
     case LED_IDLE:    on = false; break;
     case LED_READY:   on = true;  break;
-    case LED_WORKING: on = (millis() % 400) < 200; break;              // gleichmaessiges Blinken
-    case LED_ERROR: {                                                   // zwei kurze Blitze, Pause
+    case LED_WORKING: on = (millis() % 400) < 200; break;
+    case LED_ERROR: {
       uint32_t t = millis() % 1500;
       on = (t < 120) || (t >= 300 && t < 420);
       break;
@@ -63,9 +68,6 @@ static void ledTick() {
   digitalWrite(LED_PIN, on ? HIGH : LOW);
 }
 
-// ---------------------------------------------------------------------------
-// Relais (optional)
-// ---------------------------------------------------------------------------
 static void relaySet(bool powered) {
   g_powered = powered;
   if (!RELAY_ENABLED) return;
@@ -73,7 +75,7 @@ static void relaySet(bool powered) {
 }
 
 // ---------------------------------------------------------------------------
-// Einstellungen im Flash
+// Hilfsfunktionen
 // ---------------------------------------------------------------------------
 static String macToString(const uint8_t m[6]) {
   char b[18];
@@ -88,28 +90,6 @@ static bool parseMac(const String& s, uint8_t out[6]) {
   return true;
 }
 
-static void loadPrefs() {
-  g_prefs.begin("ooo", false);
-  // isKey() vorweg, sonst meldet die NVS-Bibliothek beim ersten Start vier "NOT_FOUND"-Fehler.
-  if (g_prefs.isKey("ssid")) g_ssid = g_prefs.getString("ssid", "");
-  if (g_prefs.isKey("pass")) g_pass = g_prefs.getString("pass", "");
-  if (g_prefs.isKey("host")) g_host = g_prefs.getString("host", "");
-  g_haveMac = g_prefs.isKey("mac") && g_prefs.getBytes("mac", g_macAddr, 6) == 6;
-}
-
-static void rememberMac(const uint8_t m[6]) {
-  if (g_haveMac && memcmp(m, g_macAddr, 6) == 0) return;
-  memcpy(g_macAddr, m, 6);
-  g_haveMac = true;
-  g_prefs.putBytes("mac", g_macAddr, 6);
-  Serial.printf("[prefs] MAC-Adresse gelernt: %s\n", macToString(g_macAddr).c_str());
-}
-
-// ---------------------------------------------------------------------------
-// Einrichtung über USB. Der Mac schickt eine Zeile:
-//   PROV <base64 ssid> <base64 passwort> <base64 hostname> <mac-adresse>
-// Antwort: "PROV OK". Außerdem: STATUS (Zustand ausgeben), RESET (alles vergessen).
-// ---------------------------------------------------------------------------
 static String b64decode(const String& in) {
   size_t len = 0;
   unsigned char buf[256];
@@ -118,69 +98,101 @@ static String b64decode(const String& in) {
   return String((char*)buf);
 }
 
-static bool g_reconnectRequested = false;
-static bool scanNetworks(bool quiet = false);
+// ---------------------------------------------------------------------------
+// Gespeicherte Netze
+// ---------------------------------------------------------------------------
+static String keyOf(int i, const char* suffix) { return String("n") + i + suffix; }
 
-static void printStatus() {
-  Serial.printf("STATUS fw=%s ssid=%s verbunden=%s ip=%s mac=%s host=%s mac_erreichbar=%s\n",
-                FW_VERSION, g_ssid.c_str(), WiFi.status() == WL_CONNECTED ? "ja" : "nein",
-                WiFi.localIP().toString().c_str(), g_haveMac ? macToString(g_macAddr).c_str() : "-",
-                g_host.c_str(), g_macReachable ? "ja" : "nein");
-}
-
-static void processLine(const String& line) {
-  if (line.startsWith("PROV ")) {
-    String rest = line.substring(5);
-    int a = rest.indexOf(' '), b = rest.indexOf(' ', a + 1), c = rest.indexOf(' ', b + 1);
-    if (a < 0 || b < 0 || c < 0) { Serial.println("PROV FEHLER format"); return; }
-    String ssid = b64decode(rest.substring(0, a));
-    String pass = b64decode(rest.substring(a + 1, b));
-    String host = b64decode(rest.substring(b + 1, c));
-    String mac  = rest.substring(c + 1);
-    mac.trim();
-    if (ssid.isEmpty()) { Serial.println("PROV FEHLER ssid leer"); return; }
-
-    g_ssid = ssid; g_pass = pass; g_host = host;
-    g_prefs.putString("ssid", g_ssid);
-    g_prefs.putString("pass", g_pass);
-    g_prefs.putString("host", g_host);
-    uint8_t m[6];
-    if (parseMac(mac, m)) { memcpy(g_macAddr, m, 6); g_haveMac = true; g_prefs.putBytes("mac", m, 6); }
-    g_reconnectRequested = true;
-    Serial.printf("PROV OK ssid=%s host=%s mac=%s\n", g_ssid.c_str(), g_host.c_str(),
-                  g_haveMac ? macToString(g_macAddr).c_str() : "-");
-    return;
-  }
-  if (line.startsWith("RESET")) {
-    g_prefs.clear();
-    Serial.println("RESET OK – Neustart");
-    delay(200);
-    ESP.restart();
-  }
-  if (line.startsWith("STATUS")) printStatus();
-  if (line.startsWith("SCAN")) scanNetworks(false);
-}
-
-static void handleSerial() {
-  static String line;
-  while (Serial.available()) {
-    char ch = Serial.read();
-    if (ch == '\n') { processLine(line); line = ""; }
-    else if (ch != '\r' && line.length() < 512) line += ch;
+static void loadPrefs() {
+  g_prefs.begin("ooo", false);
+  g_host = g_prefs.isKey("host") ? g_prefs.getString("host", "") : "";
+  g_netCount = g_prefs.isKey("count") ? g_prefs.getInt("count", 0) : 0;
+  if (g_netCount > MAX_NETS) g_netCount = MAX_NETS;
+  for (int i = 0; i < g_netCount; i++) {
+    g_nets[i].ssid = g_prefs.getString(keyOf(i, "s").c_str(), "");
+    g_nets[i].pass = g_prefs.getString(keyOf(i, "p").c_str(), "");
+    g_nets[i].haveMac = g_prefs.isKey(keyOf(i, "m").c_str()) &&
+                        g_prefs.getBytes(keyOf(i, "m").c_str(), g_nets[i].mac, 6) == 6;
   }
 }
 
-static void waitTicking(uint32_t ms) {
-  uint32_t end = millis() + ms;
-  while (millis() < end) { handleSerial(); ledTick(); delay(10); }
+static void saveNets() {
+  g_prefs.putInt("count", g_netCount);
+  for (int i = 0; i < g_netCount; i++) {
+    g_prefs.putString(keyOf(i, "s").c_str(), g_nets[i].ssid);
+    g_prefs.putString(keyOf(i, "p").c_str(), g_nets[i].pass);
+    if (g_nets[i].haveMac) g_prefs.putBytes(keyOf(i, "m").c_str(), g_nets[i].mac, 6);
+  }
+}
+
+// Neues Netz nach vorn, vorhandenes aktualisieren. Aeltestes faellt raus.
+static void addNet(const String& ssid, const String& pass) {
+  int found = -1;
+  for (int i = 0; i < g_netCount; i++)
+    if (g_nets[i].ssid == ssid) { found = i; break; }
+
+  Net entry;
+  if (found >= 0) {
+    entry = g_nets[found];
+    entry.pass = pass;
+    for (int i = found; i > 0; i--) g_nets[i] = g_nets[i - 1];
+  } else {
+    entry.ssid = ssid;
+    entry.pass = pass;
+    entry.haveMac = false;
+    if (g_netCount < MAX_NETS) g_netCount++;
+    for (int i = g_netCount - 1; i > 0; i--) g_nets[i] = g_nets[i - 1];
+  }
+  g_nets[0] = entry;
+  saveNets();
+}
+
+static void rememberMac(const uint8_t m[6]) {
+  if (g_current < 0) return;
+  Net& n = g_nets[g_current];
+  if (n.haveMac && memcmp(m, n.mac, 6) == 0) return;
+  memcpy(n.mac, m, 6);
+  n.haveMac = true;
+  g_prefs.putBytes(keyOf(g_current, "m").c_str(), n.mac, 6);
+  Serial.printf("[prefs] MAC-Adresse fuer \"%s\" gelernt: %s\n", n.ssid.c_str(), macToString(n.mac).c_str());
 }
 
 // ---------------------------------------------------------------------------
-// WLAN
+// Scan
 // ---------------------------------------------------------------------------
-// Letzter Abbruchgrund vom WLAN-Stack, damit man Passwortfehler von "Netz nicht
-// gefunden" unterscheiden kann (ESP32 funkt nur auf 2,4 GHz!).
-static uint8_t g_lastDisconnectReason = 0;
+static const char* encName(wifi_auth_mode_t e) {
+  switch (e) {
+    case WIFI_AUTH_OPEN: return "offen";
+    case WIFI_AUTH_WPA2_PSK: return "WPA2";
+    case WIFI_AUTH_WPA_WPA2_PSK: return "WPA/WPA2";
+    case WIFI_AUTH_WPA3_PSK: return "WPA3";
+    case WIFI_AUTH_WPA2_WPA3_PSK: return "WPA2/WPA3";
+    default: return "andere";
+  }
+}
+
+// Liefert die Anzahl sichtbarer Netze; bei quiet=false zusaetzlich als Liste ueber USB.
+static int scanNetworks(bool quiet) {
+  bool wasConnected = WiFi.status() == WL_CONNECTED;
+  if (!wasConnected) { WiFi.mode(WIFI_STA); WiFi.disconnect(false); delay(100); }
+  int n = WiFi.scanNetworks();
+  if (n < 0) { delay(500); n = WiFi.scanNetworks(); }
+  if (!quiet) {
+    for (int i = 0; i < n; i++)
+      Serial.printf("SCANNET %d %d %s %s\n", WiFi.RSSI(i), WiFi.channel(i),
+                    encName(WiFi.encryptionType(i)), WiFi.SSID(i).c_str());
+    Serial.printf("SCANEND %d\n", n);
+  }
+  return n;
+}
+
+// ---------------------------------------------------------------------------
+// Verbinden: staerkstes sichtbares Netz nehmen, das wir kennen
+// ---------------------------------------------------------------------------
+static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
+    g_lastDisconnectReason = info.wifi_sta_disconnected.reason;
+}
 
 static const char* wifiReasonText(uint8_t r) {
   switch (r) {
@@ -188,90 +200,82 @@ static const char* wifiReasonText(uint8_t r) {
     case 201: return "Netz nicht gefunden – ESP32 kann nur 2,4 GHz, nicht 5 GHz";
     case 202: return "Authentifizierung fehlgeschlagen";
     case 203: return "Access Point hat abgelehnt";
-    case 3:  case 4: return "Verbindung vom Router beendet";
+    case 3: case 4: return "Verbindung vom Router beendet";
     default: return "unbekannt";
   }
 }
 
-static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
-  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
-    g_lastDisconnectReason = info.wifi_sta_disconnected.reason;
+static void handleSerial();
+static void waitTicking(uint32_t ms) {
+  uint32_t end = millis() + ms;
+  while (millis() < end) { handleSerial(); ledTick(); delay(10); }
 }
 
-// Zeigt, welche Netze der ESP32 sieht, und ob das gesuchte dabei ist.
-// Listet alle sichtbaren 2,4-GHz-Netze auf. Format je Zeile, SSID zuletzt (kann Leerzeichen
-// enthalten):  SCANNET <rssi> <kanal> <verschluesselung> <ssid>
-static bool scanNetworks(bool quiet) {
-  bool wasConnected = WiFi.status() == WL_CONNECTED;
-  if (!wasConnected) { WiFi.mode(WIFI_STA); WiFi.disconnect(false); delay(100); }
-  int n = WiFi.scanNetworks();
-  if (n < 0) { delay(500); n = WiFi.scanNetworks(); }   // ein zweiter Versuch genuegt meist
-  bool found = false;
-  for (int i = 0; i < n; i++) {
-    if (WiFi.SSID(i) == g_ssid) found = true;
-    if (quiet) continue;
-    wifi_auth_mode_t e = WiFi.encryptionType(i);
-    const char* enc = e == WIFI_AUTH_OPEN ? "offen"
-                    : e == WIFI_AUTH_WPA2_PSK ? "WPA2"
-                    : e == WIFI_AUTH_WPA_WPA2_PSK ? "WPA/WPA2"
-                    : e == WIFI_AUTH_WPA3_PSK ? "WPA3"
-                    : e == WIFI_AUTH_WPA2_WPA3_PSK ? "WPA2/WPA3" : "andere";
-    Serial.printf("SCANNET %d %d %s %s\n", WiFi.RSSI(i), WiFi.channel(i), enc, WiFi.SSID(i).c_str());
+static bool tryNet(int idx) {
+  Serial.printf("[wifi] verbinde mit \"%s\" …\n", g_nets[idx].ssid.c_str());
+  WiFi.disconnect(true);
+  waitTicking(300);
+  WiFi.begin(g_nets[idx].ssid.c_str(), g_nets[idx].pass.c_str());
+  uint32_t start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < CONNECT_TRY_MS) waitTicking(50);
+  if (WiFi.status() == WL_CONNECTED) {
+    g_current = idx;
+    ledMode(LED_READY);
+    Serial.printf("WIFI OK %s ip=%s rssi=%d\n", g_nets[idx].ssid.c_str(),
+                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    MDNS.begin("ooo-esp");
+    return true;
   }
-  if (!quiet) Serial.printf("SCANEND %d\n", n);
-  WiFi.scanDelete();
-  if (wasConnected && WiFi.status() != WL_CONNECTED) WiFi.reconnect();
-  return found;
+  Serial.printf("[wifi] \"%s\" fehlgeschlagen, grund=%u (%s)\n", g_nets[idx].ssid.c_str(),
+                g_lastDisconnectReason, wifiReasonText(g_lastDisconnectReason));
+  return false;
 }
+
 static bool connectWifi() {
-  if (g_ssid.isEmpty()) return false;
+  if (g_netCount == 0) return false;
   ledMode(LED_WORKING);
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.setHostname("ooo-esp");
+  g_current = -1;
 
-  // Mehrere Anlaeufe: Hotspots und Repeater sind nicht immer sofort da.
-  for (int versuch = 1; versuch <= 3; versuch++) {
-    Serial.printf("[wifi] Versuch %d von 3: verbinde mit %s …\n", versuch, g_ssid.c_str());
-    WiFi.disconnect(true);
-    waitTicking(300);
-    WiFi.begin(g_ssid.c_str(), g_pass.c_str());
-    uint32_t start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) waitTicking(50);
-    if (WiFi.status() == WL_CONNECTED) break;
-    Serial.printf("[wifi] Versuch %d fehlgeschlagen, grund=%u (%s)\n",
-                  versuch, g_lastDisconnectReason, wifiReasonText(g_lastDisconnectReason));
-    if (versuch < 3) waitTicking(3000);
+  // Der Scan liefert die Reihenfolge: das staerkste bekannte Netz zuerst.
+  int n = scanNetworks(true);
+  for (int i = 0; i < n; i++) {
+    for (int k = 0; k < g_netCount; k++) {
+      if (WiFi.SSID(i) != g_nets[k].ssid) continue;
+      WiFi.scanDelete();
+      if (tryNet(k)) return true;
+      n = scanNetworks(true);          // nach einem Fehlversuch neu schauen
+      i = -1;                          // und von vorn, aber dieses Netz ueberspringen
+      g_nets[k].ssid += "\x01";        // Marker: in diesem Durchlauf schon probiert
+      break;
+    }
   }
+  WiFi.scanDelete();
+  // Marker wieder entfernen
+  for (int k = 0; k < g_netCount; k++)
+    if (g_nets[k].ssid.endsWith("\x01")) g_nets[k].ssid.remove(g_nets[k].ssid.length() - 1);
 
-  if (WiFi.status() != WL_CONNECTED) {
-    bool sichtbar = scanNetworks(true);
-    Serial.printf("WIFI FEHLER grund=%u (%s) netz_sichtbar=%s\n",
-                  g_lastDisconnectReason, wifiReasonText(g_lastDisconnectReason), sichtbar ? "ja" : "nein");
-    if (!sichtbar)
-      Serial.println("WIFI HINWEIS Netz gerade nicht in Reichweite. Bei iPhone-Hotspots: Fenster "
-                     "\"Persoenlicher Hotspot\" offen lassen, sonst schlaeft der Funk ein.");
-    ledMode(LED_ERROR);
-    return false;
-  }
-  ledMode(LED_READY);
-  Serial.printf("WIFI OK %s ip=%s rssi=%d\n", g_ssid.c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
-  MDNS.begin("ooo-esp");
-  return true;
+  Serial.printf("WIFI FEHLER kein bekanntes Netz erreichbar (%d bekannt, %d sichtbar)\n", g_netCount, n);
+  ledMode(LED_ERROR);
+  return false;
 }
 
-// Ohne Zugangsdaten: langsam blinken und auf die Einrichtung über USB warten.
+// Ohne bekannte Netze: LED aus, auf Einrichtung ueber USB warten.
 static void waitForSetup() {
   Serial.println("WARTE AUF EINRICHTUNG – ESP32 per USB an den Mac, dort: bash mac/setup.sh");
   ledMode(LED_IDLE);
-  while (g_ssid.isEmpty()) waitTicking(100);
+  while (g_netCount == 0) waitTicking(100);
 }
 
 static void ensureWifi() {
-  if (g_reconnectRequested) { g_reconnectRequested = false; connectWifi(); return; }
   if (WiFi.status() == WL_CONNECTED) { if (g_led == LED_ERROR) ledMode(LED_READY); return; }
   Serial.println("[wifi] Verbindung weg – neu verbinden");
-  if (!connectWifi()) { waitForSetup(); connectWifi(); }
+  if (!connectWifi()) {
+    if (g_netCount == 0) { waitForSetup(); connectWifi(); }
+    else waitTicking(10000);
+  }
 }
 
 static void ensureTime() {
@@ -298,14 +302,15 @@ static bool macReachable() {
   return true;
 }
 
-// ---------------------------------------------------------------------------
-// Wake-on-LAN
-// ---------------------------------------------------------------------------
 static bool sendWol() {
-  if (!g_haveMac) { Serial.println("[wol] keine MAC-Adresse bekannt"); return false; }
+  if (g_current < 0 || !g_nets[g_current].haveMac) {
+    Serial.println("[wol] fuer dieses Netz ist noch keine MAC-Adresse bekannt");
+    return false;
+  }
+  const uint8_t* mac = g_nets[g_current].mac;
   uint8_t pkt[102];
   memset(pkt, 0xFF, 6);
-  for (int i = 1; i <= 16; i++) memcpy(pkt + i * 6, g_macAddr, 6);
+  for (int i = 1; i <= 16; i++) memcpy(pkt + i * 6, mac, 6);
   WiFiUDP udp;
   udp.begin(0);
   for (int i = 0; i < WOL_BURST; i++) {
@@ -315,12 +320,65 @@ static bool sendWol() {
     waitTicking(300);
   }
   udp.stop();
-  Serial.printf("[wol] %d Magic Packets an %s\n", WOL_BURST, macToString(g_macAddr).c_str());
+  Serial.printf("[wol] %d Magic Packets an %s\n", WOL_BURST, macToString(mac).c_str());
   return true;
 }
 
 // ---------------------------------------------------------------------------
-// HTTP zur Edge Function
+// Einrichtung ueber USB
+//   PROV <b64 ssid> <b64 pass> <b64 host>   Netz hinzufuegen (Host optional leer)
+//   CONNECT                                  jetzt verbinden
+//   STATUS / SCAN / RESET
+// ---------------------------------------------------------------------------
+static bool g_reconnectRequested = false;
+
+static void printStatus() {
+  Serial.printf("STATUS fw=%s verbunden=%s ssid=%s ip=%s host=%s mac_erreichbar=%s netze=%d\n",
+                FW_VERSION, WiFi.status() == WL_CONNECTED ? "ja" : "nein",
+                g_current >= 0 ? g_nets[g_current].ssid.c_str() : "-",
+                WiFi.localIP().toString().c_str(), g_host.c_str(),
+                g_macReachable ? "ja" : "nein", g_netCount);
+  for (int i = 0; i < g_netCount; i++)
+    Serial.printf("STATUSNET %d %s mac=%s\n", i + 1, g_nets[i].ssid.c_str(),
+                  g_nets[i].haveMac ? macToString(g_nets[i].mac).c_str() : "-");
+}
+
+static void processLine(const String& line) {
+  if (line.startsWith("PROV ")) {
+    String rest = line.substring(5);
+    int a = rest.indexOf(' '), b = rest.indexOf(' ', a + 1);
+    if (a < 0) { Serial.println("PROV FEHLER format"); return; }
+    String ssid = b64decode(rest.substring(0, a));
+    String pass = b64decode(b < 0 ? rest.substring(a + 1) : rest.substring(a + 1, b));
+    String host = b < 0 ? "" : b64decode(rest.substring(b + 1));
+    if (ssid.isEmpty()) { Serial.println("PROV FEHLER ssid leer"); return; }
+    if (!host.isEmpty() && host != g_host) { g_host = host; g_prefs.putString("host", g_host); }
+    addNet(ssid, pass);
+    Serial.printf("PROV OK ssid=%s host=%s netze=%d\n", ssid.c_str(), g_host.c_str(), g_netCount);
+    return;
+  }
+  if (line.startsWith("CONNECT")) { g_reconnectRequested = true; Serial.println("CONNECT OK"); return; }
+  if (line.startsWith("RESET")) {
+    g_prefs.clear();
+    Serial.println("RESET OK – Neustart");
+    delay(200);
+    ESP.restart();
+  }
+  if (line.startsWith("STATUS")) printStatus();
+  if (line.startsWith("SCAN")) scanNetworks(false);
+}
+
+static void handleSerial() {
+  static String line;
+  while (Serial.available()) {
+    char ch = Serial.read();
+    if (ch == '\n') { processLine(line); line = ""; }
+    else if (ch != '\r' && line.length() < 512) line += ch;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP zur ooo-Cloud
 // ---------------------------------------------------------------------------
 static int request(const char* path, const String& body, String& response, uint32_t timeoutMs) {
   WiFiClientSecure client;
@@ -342,11 +400,12 @@ static String infoJson() {
   JsonDocument doc;
   doc["fw"] = FW_VERSION;
   doc["rssi"] = WiFi.RSSI();
-  doc["ssid"] = g_ssid;
+  doc["ssid"] = g_current >= 0 ? g_nets[g_current].ssid : "";
   doc["uptime_s"] = millis() / 1000;
   doc["mac_host"] = g_host;
   doc["mac_reachable"] = g_macReachable;
-  doc["mac_addr"] = g_haveMac ? macToString(g_macAddr) : "";
+  doc["mac_addr"] = (g_current >= 0 && g_nets[g_current].haveMac) ? macToString(g_nets[g_current].mac) : "";
+  doc["known_nets"] = g_netCount;
   if (RELAY_ENABLED) doc["relay"] = g_powered ? "on" : "off";
   String out;
   serializeJson(doc, out);
@@ -360,9 +419,6 @@ static void ack(long id, const char* result) {
   Serial.printf("[ack] id=%ld result=%s http=%d\n", id, result, code);
 }
 
-// ---------------------------------------------------------------------------
-// Kommandos
-// ---------------------------------------------------------------------------
 static const char* execute(const char* action, JsonObjectConst payload) {
   if (strcmp(action, "wake") == 0) {
     Serial.println("[cmd] wake");
@@ -423,7 +479,8 @@ void setup() {
 
   WiFi.onEvent(onWifiEvent);
   loadPrefs();
-  if (g_ssid.isEmpty()) waitForSetup();
+  Serial.printf("[prefs] %d bekannte Netze, Mac-Name \"%s\"\n", g_netCount, g_host.c_str());
+  if (g_netCount == 0) waitForSetup();
   connectWifi();
   ensureTime();
   g_lastOkMs = millis();
@@ -431,8 +488,9 @@ void setup() {
 
 void loop() {
   handleSerial();
+  if (g_reconnectRequested) { g_reconnectRequested = false; connectWifi(); }
   ensureWifi();
-  pollOnce();
+  if (WiFi.status() == WL_CONNECTED) pollOnce();
   if (millis() - g_lastOkMs > REBOOT_AFTER_OFFLINE_MS) {
     Serial.println("[watchdog] lange kein erfolgreicher Poll – Neustart");
     ESP.restart();

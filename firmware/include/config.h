@@ -1,5 +1,9 @@
 #pragma once
 
+// --- Bekannte WLANs --------------------------------------------------------------
+#define MAX_NETS           8     // so viele Netze merkt sich der ESP32 (aeltestes faellt raus)
+#define CONNECT_TRY_MS     15000 // Zeitfenster je Netz und Versuch
+
 // --- Wecken ----------------------------------------------------------------------
 #define WOL_BURST          5     // Magic Packets pro Wake
 #define WAKE_VERIFY_SEC    45    // so lange nach dem Wake auf Ping-Antwort warten
@@ -17,4 +21,4 @@
 #define BACKOFF_MIN_MS     5000
 #define BACKOFF_MAX_MS     60000
 #define REBOOT_AFTER_OFFLINE_MS (10UL * 60UL * 1000UL)
-#define FW_VERSION         "0.4.0"
+#define FW_VERSION         "0.5.0"

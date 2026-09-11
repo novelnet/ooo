@@ -35,7 +35,8 @@ LED an GPIO 2. Der Zustand wird deshalb über Blau angezeigt, "blau aus" heißt:
 | `STATUS` | Zustand ausgeben |
 | `SCAN` | sichtbare WLANs auflisten (`SCANNET <rssi> <kanal> <verschl.> <ssid>`) |
 | `RESET` | alles vergessen und neu starten |
-| `PROV <b64 ssid> <b64 pass> <b64 host> <mac>` | einrichten (macht `mac/setup.sh`) |
+| `PROV <b64 ssid> <b64 pass> <b64 host>` | ein Netz hinzufügen (macht `mac/setup.sh`) |
+| `CONNECT` | jetzt verbinden |
 
 ## Optionen (`include/config.h`)
 
@@ -44,11 +45,16 @@ LED an GPIO 2. Der Zustand wird deshalb über Blau angezeigt, "blau aus" heißt:
 - Getestet auf ESP32-D0WD-V3 (4 MB Flash, CH340). Anderes Board: `board =` in `platformio.ini`.
 - **Nur 2,4 GHz.** Der ESP32 kann kein 5-GHz-WLAN. Der Netz-Dialog zeigt deshalb nur, was er wirklich erreicht.
 
+## Mehrere Netze
+
+Der ESP32 merkt sich bis zu acht WLANs und nimmt beim Start das stärkste, das er kennt.
+Neue Netze kommen über USB dazu, das älteste fällt raus.
+
 ## MAC-Adresse
 
 Zum Wecken zählt nicht die Hardware-Adresse des Macs, sondern die **private WLAN-Adresse**, die
-macOS pro Netz vergibt. Der ESP32 liest sie nach jedem erfolgreichen Ping aus der ARP-Tabelle und
-merkt sie sich. Die beim Einrichten übertragene Adresse ist nur ein Startwert.
+macOS **pro Netz** vergibt. Der ESP32 liest sie nach jedem erfolgreichen Ping aus der ARP-Tabelle
+und merkt sie sich getrennt für jedes Netz.
 
 Damit sie stabil bleibt: am Mac unter WLAN → Details → "Private WLAN-Adresse" auf **Fest** stellen.
 

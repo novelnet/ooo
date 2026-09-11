@@ -1,22 +1,25 @@
 #!/bin/bash
 # ooo einrichten – ein Befehl, danach ist alles fertig.
 #
-#   bash mac/setup.sh
+#   bash mac/setup.sh                 einmalig einrichten
+#   bash mac/setup.sh --install-auto  Automatik: ESP32 steckt am Mac und bekommt bei jedem
+#                                     Netzwechsel die neuen Zugangsdaten, ganz ohne Befehl
+#   bash mac/setup.sh --remove-auto   Automatik wieder abschalten
+#   bash mac/setup.sh --waehlen       Netz von Hand aus der Liste wählen
 #
-# Der ESP32 muss per USB am Mac stecken. Er sucht selbst nach WLANs, du wählst deins
-# aus einer Liste, und der Mac schickt Zugangsdaten, seinen Namen und seine MAC-Adresse
-# über das Kabel. Danach braucht der ESP32 nur noch Strom.
+# Der ESP32 muss per USB am Mac stecken. Er scannt selbst; alle Netze, die der Mac kennt
+# und die der ESP32 sieht, werden übertragen. Er merkt sich bis zu acht davon.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+TMP=$(mktemp -d); chmod 700 "$TMP"; trap 'rm -rf "$TMP"' EXIT
 
 MODE=normal
 for a in "$@"; do
   case "$a" in
-    --waehlen)     MODE=waehlen ;;   # WLAN von Hand aus der Liste waehlen
-    --auto)        MODE=auto ;;      # vom Hintergrunddienst aufgerufen, keine Rueckfragen
-    --install-auto) MODE=install ;;  # Hintergrunddienst einrichten
-    --remove-auto) MODE=remove ;;
+    --waehlen)      MODE=waehlen ;;
+    --auto)         MODE=auto ;;
+    --install-auto) MODE=install ;;
+    --remove-auto)  MODE=remove ;;
   esac
 done
 
@@ -24,8 +27,10 @@ AGENT="$HOME/Library/LaunchAgents/com.ooo.watch.plist"
 if [ "$MODE" = install ]; then
   sed "s|__OOO_DIR__|$ROOT/mac|g" "$ROOT/mac/launchd/com.ooo.watch.plist" > "$AGENT"
   launchctl bootout "gui/$(id -u)/com.ooo.watch" 2>/dev/null
-  launchctl bootstrap "gui/$(id -u)" "$AGENT" && echo "✅ Automatik aktiv: ESP32 anstecken genügt ab jetzt."
-  echo "   Ausschalten mit:  bash mac/setup.sh --remove-auto"
+  launchctl bootstrap "gui/$(id -u)" "$AGENT" && echo "✅ Automatik aktiv."
+  echo "   Der ESP32 darf am Mac stecken bleiben. Bei jedem WLAN-Wechsel bekommt er die"
+  echo "   neuen Zugangsdaten automatisch. Protokoll: /tmp/ooo-watch.log"
+  echo "   Abschalten mit:  bash mac/setup.sh --remove-auto"
   exit 0
 fi
 if [ "$MODE" = remove ]; then
@@ -38,8 +43,6 @@ PY=$(command -v python3)
 python3 -c "import serial" 2>/dev/null || PY="$HOME/.local/pipx/venvs/platformio/bin/python3"
 [ -x "$PY" ] || { echo "❌ Python mit pyserial fehlt. Einmal ausführen:  pipx install platformio"; exit 1; }
 
-# Aktives Interface (fuer Wake-on-LAN) und WLAN-Interface (fuer die Netzliste)
-IFACE=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}'); IFACE=${IFACE:-en0}
 WIFI_IF=$(networksetup -listallhardwareports | awk '/Hardware Port: Wi-Fi/{getline; print $2}')
 WIFI_IF=${WIFI_IF:-en0}
 
@@ -48,10 +51,10 @@ PORT=$(ls /dev/cu.usbserial-* /dev/cu.wchusbserial* /dev/cu.SLAB_USBtoUART* /dev
 [ -n "$PORT" ] || { echo "❌ Kein ESP32 gefunden. Steckt er per USB am Mac? (Datenkabel, kein reines Ladekabel)"; exit 1; }
 echo "   gefunden: $PORT"
 
-echo "== WLAN bestimmen =="
-# Der Mac verrät nicht, in welchem Netz er steckt (dafür bräuchte das Terminal die
-# Berechtigung für Ortungsdienste). Er verrät aber, welche Netze er kennt – und der ESP32
-# weiß, welche in Reichweite sind. Die Schnittmenge ist praktisch immer genau das richtige.
+echo "== WLANs bestimmen =="
+# macOS verrät nicht, in welchem Netz der Mac steckt (dafür bräuchte das Terminal die
+# Berechtigung für Ortungsdienste). Die Liste der bekannten Netze ist aber frei lesbar.
+# Geschnitten mit dem Scan des ESP32 bleibt genau das übrig, was hier und jetzt nutzbar ist.
 "$PY" "$ROOT/mac/provision.py" scan "$PORT" > "$TMP/sichtbar.txt" || { echo "❌ Scan fehlgeschlagen."; exit 1; }
 networksetup -listpreferredwirelessnetworks "$WIFI_IF" 2>/dev/null | tail -n +2 | sed $'s/^[ \t]*//' > "$TMP/bekannt.txt"
 : > "$TMP/treffer.txt"
@@ -59,19 +62,13 @@ while IFS= read -r n; do
   [ -n "$n" ] && grep -Fxq "$n" "$TMP/sichtbar.txt" && echo "$n" >> "$TMP/treffer.txt"
 done < "$TMP/bekannt.txt"
 
-SSID=""
-if [ "$MODE" != waehlen ]; then
-  SSID=$(head -1 "$TMP/treffer.txt")
-  if [ -n "$SSID" ]; then
-    N=$(wc -l < "$TMP/treffer.txt" | tr -d ' ')
-    echo "   automatisch gewählt: $SSID"
-    [ "$N" -gt 1 ] && echo "   ($N bekannte Netze in Reichweite, das oberste aus der Mac-Reihenfolge gewinnt; 'bash mac/setup.sh --waehlen' für die Liste)"
-  fi
-fi
-
-if [ -z "$SSID" ]; then
-  echo "   Kein bekanntes Netz in Reichweite – bitte auswählen. Sichtbar sind:"
-  nl -w6 -s'  ' "$TMP/sichtbar.txt" | sed 's/^/   /'
+if [ "$MODE" = waehlen ] || [ ! -s "$TMP/treffer.txt" ]; then
+  [ -s "$TMP/treffer.txt" ] || {
+    echo "   Keines der bekannten Netze ist für den ESP32 sichtbar."
+    echo "   Häufigster Grund: Das Netz funkt nur auf 5 GHz – der ESP32 kann nur 2,4 GHz."
+    echo "   Der Mac kennt:"; sed 's/^/     /' "$TMP/bekannt.txt" | head -12
+  }
+  echo "   Der ESP32 sieht:"; nl -w6 -s'  ' "$TMP/sichtbar.txt" | sed 's/^/   /'
   SSID=$(OOO_NETS="$TMP/sichtbar.txt" osascript <<'APPLESCRIPT' 2>/dev/null
 set f to POSIX file (system attribute "OOO_NETS")
 set t to read f as «class utf8»
@@ -86,39 +83,45 @@ if c is false then return ""
 return item 1 of c
 APPLESCRIPT
 )
+  [ -n "$SSID" ] || { echo "❌ Kein WLAN ausgewählt."; exit 1; }
+  echo "$SSID" > "$TMP/treffer.txt"
 fi
-if [ -z "$SSID" ]; then
-  echo "❌ Kein WLAN ausgewählt."
-  echo "   Tipp zum Testen unterwegs: iPhone-Hotspot einschalten (in den iPhone-Einstellungen"
-  echo "   'Maximale Kompatibilität' aktivieren, das schaltet ihn auf 2,4 GHz) und nochmal starten."
-  exit 1
-fi
+echo "   nutzbar: $(tr '\n' ',' < "$TMP/treffer.txt" | sed 's/,$//')"
 
-echo "== Daten vom Mac =="
-MAC=$(networksetup -getmacaddress "$IFACE" 2>/dev/null | awk '{print $3}')
-HOST=$(scutil --get LocalHostName)
-echo "   Mac: $HOST ($IFACE, $MAC)"
-
-echo "== WLAN-Passwort =="
+echo "== Passwörter aus dem Schlüsselbund =="
 SYS_KC=/Library/Keychains/System.keychain
-PASS=$(security find-generic-password -D "AirPort network password" -a "$SSID" -w "$SYS_KC" 2>/dev/null)
-[ -n "$PASS" ] || PASS=$(security find-generic-password -s "AirPort" -a "$SSID" -w "$SYS_KC" 2>/dev/null)
-if [ -n "$PASS" ]; then
-  echo "   aus dem Schlüsselbund gelesen."
-else
-  echo "   nicht im Schlüsselbund – es öffnet sich ein Eingabefenster."
-  PASS=$(OOO_SSID="$SSID" osascript \
-    -e 'set s to system attribute "OOO_SSID"' \
-    -e 'display dialog "WLAN-Passwort für " & s default answer "" with hidden answer with title "ooo einrichten"' \
-    -e 'text returned of result' 2>/dev/null)
-fi
-[ -n "$PASS" ] || { echo "❌ Ohne Passwort geht es nicht."; exit 1; }
+: > "$TMP/paare.txt"
+while IFS= read -r SSID; do
+  [ -n "$SSID" ] || continue
+  PASS=$(security find-generic-password -D "AirPort network password" -a "$SSID" -w "$SYS_KC" 2>/dev/null)
+  [ -n "$PASS" ] || PASS=$(security find-generic-password -s "AirPort" -a "$SSID" -w "$SYS_KC" 2>/dev/null)
+  if [ -z "$PASS" ] && [ "$MODE" != auto ]; then
+    PASS=$(OOO_SSID="$SSID" osascript \
+      -e 'set s to system attribute "OOO_SSID"' \
+      -e 'display dialog "WLAN-Passwort für " & s default answer "" with hidden answer with title "ooo einrichten"' \
+      -e 'text returned of result' 2>/dev/null)
+  fi
+  if [ -n "$PASS" ]; then printf '%s\t%s\n' "$SSID" "$PASS" >> "$TMP/paare.txt"; echo "   $SSID: ok"
+  else echo "   $SSID: kein Passwort gefunden, wird übersprungen"; fi
+done < "$TMP/treffer.txt"
+[ -s "$TMP/paare.txt" ] || { echo "❌ Kein einziges Passwort verfügbar."; exit 1; }
 
 echo "== An den ESP32 senden =="
-if "$PY" "$ROOT/mac/provision.py" prov "$PORT" "$SSID" "$PASS" "$HOST" "$MAC"; then
-  echo "   ✅ ESP32 ist im WLAN. Die blaue LED leuchtet jetzt dauerhaft."
+HOST=$(scutil --get LocalHostName)
+python3 - "$TMP/paare.txt" "$HOST" > "$TMP/cfg.json" <<'PYEOF'
+import json, sys
+nets = []
+for line in open(sys.argv[1], encoding="utf-8"):
+    ssid, _, pw = line.rstrip("\n").partition("\t")
+    if ssid:
+        nets.append({"ssid": ssid, "pass": pw})
+json.dump({"host": sys.argv[2], "nets": nets}, sys.stdout)
+PYEOF
+chmod 600 "$TMP/cfg.json"
+if "$PY" "$ROOT/mac/provision.py" prov "$PORT" "$TMP/cfg.json"; then
+  echo "   ✅ ESP32 ist im WLAN. Die blaue LED leuchtet dauerhaft."
 else
-  echo "   ❌ Nicht verbunden. Meist ist das Passwort falsch – einfach nochmal starten."
+  echo "   ❌ Nicht verbunden. Blaue LED aus oder Doppelblitz."
   exit 1
 fi
 
@@ -135,5 +138,4 @@ else
 fi
 
 echo
-echo "Fertig. Der ESP32 braucht ab jetzt nur noch Strom, egal woher."
-[ -f "$AGENT" ] || echo "Tipp: 'bash mac/setup.sh --install-auto' – dann reicht künftig Anstecken, ohne Befehl."
+[ -f "$AGENT" ] || echo "Tipp: 'bash mac/setup.sh --install-auto' – dann bekommt der ESP32 bei jedem WLAN-Wechsel automatisch die neuen Zugangsdaten."

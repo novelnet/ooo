@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Redet mit dem ESP32 über USB. Wird von mac/setup.sh aufgerufen.
 
-  provision.py scan <port>                            → sichtbare Netze, stärkstes zuerst
-  provision.py prov <port> <ssid> <pass> <host> <mac> → einrichten
+  provision.py scan <port>              → sichtbare Netze, stärkstes zuerst
+  provision.py prov <port> <json-datei> → Netze und Mac-Name übertragen, dann verbinden
+
+Die JSON-Datei enthält {"host": "...", "nets": [{"ssid": "...", "pass": "..."}, ...]}.
+Passwörter laufen bewusst über eine Datei mit Rechten 600 und nicht über die Kommandozeile,
+damit sie nicht in der Prozessliste auftauchen.
 """
-import base64, sys, time
+import base64, json, sys, time
 import serial
 
 
@@ -29,39 +33,46 @@ def scan(port):
                 if len(parts) < 5:
                     continue
                 rssi, ssid = int(parts[1]), parts[4]
-                if ssid and rssi > nets.get(ssid, (-999,))[0]:
-                    nets[ssid] = (rssi, parts[3])
+                if ssid and rssi > nets.get(ssid, -999):
+                    nets[ssid] = rssi
             elif raw.startswith("SCANEND"):
                 break
     if not nets:
         print("Kein Netz gefunden.", file=sys.stderr)
         return 1
-    for ssid, (rssi, enc) in sorted(nets.items(), key=lambda kv: -kv[1][0]):
+    for ssid in sorted(nets, key=lambda k: -nets[k]):
         print(ssid)
     return 0
 
 
-def prov(port, ssid, password, host, mac):
+def prov(port, cfg_path):
+    cfg = json.load(open(cfg_path))
     b64 = lambda s: base64.b64encode(s.encode()).decode()
-    line = f"PROV {b64(ssid)} {b64(password)} {b64(host)} {mac}\n"
-    ok = False
+    host = cfg.get("host", "")
+    ok_wifi = False
+
     with open_port(port) as s:
-        s.write(line.encode()); s.flush()
+        for net in cfg["nets"]:
+            s.write(f"PROV {b64(net['ssid'])} {b64(net['pass'])} {b64(host)}\n".encode())
+            s.flush()
+            time.sleep(0.4)
+        s.write(b"CONNECT\n"); s.flush()
+
         end = time.time() + 120
         while time.time() < end:
             raw = s.readline().decode("utf-8", "replace").strip()
             if not raw:
                 continue
-            if raw.startswith(("PROV ", "WIFI ", "[wifi] Versuch")):
+            if raw.startswith(("PROV ", "WIFI ", "[wifi] verbinde")):
                 print("   " + raw)
             if raw.startswith("WIFI OK"):
-                ok = True
+                ok_wifi = True
                 break
-            if raw.startswith(("PROV FEHLER", "WIFI FEHLER")):
+            if raw.startswith("WIFI FEHLER"):
                 break
-    return 0 if ok else 1
+    return 0 if ok_wifi else 1
 
 
 if __name__ == "__main__":
     mode = sys.argv[1]
-    sys.exit(scan(sys.argv[2]) if mode == "scan" else prov(*sys.argv[2:7]))
+    sys.exit(scan(sys.argv[2]) if mode == "scan" else prov(sys.argv[2], sys.argv[3]))
