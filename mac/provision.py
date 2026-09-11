@@ -4,7 +4,10 @@
   provision.py scan <port>              → sichtbare Netze, stärkstes zuerst
   provision.py prov <port> <json-datei> → Netze und Mac-Name übertragen, dann verbinden
 
-Die JSON-Datei enthält {"host": "...", "nets": [{"ssid": "...", "pass": "..."}, ...]}.
+Die JSON-Datei enthält {"host": "...", "mac": "aa:bb:...", "nets": [{"ssid": "...", "pass": "..."}, ...]}.
+Die MAC-Adresse ist die, die der Mac gerade wirklich benutzt (macOS vergibt pro WLAN eine
+eigene private Adresse). Sie wird erst nach dem Verbinden geschickt und gilt dann für genau
+das Netz, in dem der ESP32 gelandet ist.
 Passwörter laufen bewusst über eine Datei mit Rechten 600 und nicht über die Kommandozeile,
 damit sie nicht in der Prozessliste auftauchen.
 """
@@ -49,6 +52,7 @@ def prov(port, cfg_path):
     cfg = json.load(open(cfg_path))
     b64 = lambda s: base64.b64encode(s.encode()).decode()
     host = cfg.get("host", "")
+    mac = cfg.get("mac", "")
     ok_wifi = False
 
     with open_port(port) as s:
@@ -67,6 +71,16 @@ def prov(port, cfg_path):
                 print("   " + raw)
             if raw.startswith("WIFI OK"):
                 ok_wifi = True
+                # Erst jetzt die MAC-Adresse schicken: sie gehört zu genau diesem Netz.
+                if mac:
+                    s.write(f"MACADDR {mac}\n".encode())
+                    s.flush()
+                    deadline = time.time() + 5
+                    while time.time() < deadline:
+                        line = s.readline().decode("utf-8", "replace").strip()
+                        if line.startswith("MACADDR"):
+                            print("   " + line)
+                            break
                 break
             if raw.startswith("WIFI FEHLER"):
                 break

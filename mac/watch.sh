@@ -24,7 +24,10 @@ fi
 GW=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}')
 [ -n "$GW" ] || exit 0
 GWMAC=$(arp -n "$GW" 2>/dev/null | awk '{print $4}')
-FP="$PORT|$GW|$GWMAC"
+# Die eigene Adresse gehoert dazu: macOS wechselt die private WLAN-Adresse gelegentlich,
+# und dann muss der ESP32 die neue erfahren, sonst weckt sein Paket niemanden mehr.
+SELF=$(ifconfig 2>/dev/null | awk '/^en0:/{f=1} f&&/ether/{print $2; exit}')
+FP="$PORT|$GW|$GWMAC|$SELF"
 
 LAST=$(cat "$STATE" 2>/dev/null || true)
 [ "$FP" = "$LAST" ] && exit 0

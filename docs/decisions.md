@@ -120,3 +120,12 @@ plus dessen MAC-Adresse (der WLAN-Name ist ohne Ortungsdienste-Berechtigung nich
 Schlaf weiter Strom und ist damit immer im selben Netz wie der Mac.
 **Warum die MAC-Adresse je Netz:** macOS vergibt pro WLAN eine eigene private Adresse. Gemessen:
 Hardware `f4:d4:88:84:76:a6`, im Hotspot `12:ac:41:9b:31:54`, im Heimnetz `86:83:c3:fa:70:58`.
+
+## 18. Die Adresse des Macs kommt vom Mac, nicht aus der Beobachtung
+**Warum:** `ifconfig en0` liefert die tatsächlich benutzte private Adresse – der Mac muss sie
+nicht erraten lassen. Sie wird per `MACADDR` erst **nach** dem Verbinden geschickt, damit sie
+eindeutig zu dem Netz gehört, in dem der ESP32 gelandet ist. Das Lernen per ARP bleibt als
+Auffrischung bestehen. Je Netz werden die letzten drei Adressen behalten und beim Wecken alle
+angesprochen, weil macOS die private Adresse rotieren lassen kann.
+**Folge für den Hintergrunddienst:** Der Fingerabdruck enthält auch die eigene Adresse, damit
+eine Rotation eine Neuübertragung auslöst.

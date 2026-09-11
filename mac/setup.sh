@@ -108,14 +108,18 @@ done < "$TMP/treffer.txt"
 
 echo "== An den ESP32 senden =="
 HOST=$(scutil --get LocalHostName)
-python3 - "$TMP/paare.txt" "$HOST" > "$TMP/cfg.json" <<'PYEOF'
+# Die Adresse, die der Mac gerade wirklich benutzt – nicht die Hardware-Adresse.
+# macOS vergibt pro WLAN eine eigene private Adresse; nur diese weckt den Mac auf.
+MAC=$(ifconfig "$WIFI_IF" 2>/dev/null | awk '/ether/{print $2}')
+echo "   Mac: $HOST, Adresse in diesem Netz: ${MAC:-unbekannt}"
+python3 - "$TMP/paare.txt" "$HOST" "${MAC:-}" > "$TMP/cfg.json" <<'PYEOF'
 import json, sys
 nets = []
 for line in open(sys.argv[1], encoding="utf-8"):
     ssid, _, pw = line.rstrip("\n").partition("\t")
     if ssid:
         nets.append({"ssid": ssid, "pass": pw})
-json.dump({"host": sys.argv[2], "nets": nets}, sys.stdout)
+json.dump({"host": sys.argv[2], "mac": sys.argv[3], "nets": nets}, sys.stdout)
 PYEOF
 chmod 600 "$TMP/cfg.json"
 if "$PY" "$ROOT/mac/provision.py" prov "$PORT" "$TMP/cfg.json"; then

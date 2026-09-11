@@ -29,12 +29,13 @@
 static Preferences g_prefs;
 
 // Mehrere bekannte Netze. Die MAC-Adresse des Macs wird je Netz gemerkt, weil macOS
-// pro WLAN eine andere (private) Adresse benutzt.
+// pro WLAN eine andere private Adresse benutzt – und sie zusaetzlich rotieren lassen kann.
+// Deshalb je Netz die letzten MAX_MACS Adressen behalten und beim Wecken alle ansprechen.
 struct Net {
   String  ssid;
   String  pass;
-  uint8_t mac[6];
-  bool    haveMac;
+  uint8_t macs[MAX_MACS][6];
+  int     macCount;
 };
 static Net      g_nets[MAX_NETS];
 static int      g_netCount = 0;
@@ -111,8 +112,14 @@ static void loadPrefs() {
   for (int i = 0; i < g_netCount; i++) {
     g_nets[i].ssid = g_prefs.getString(keyOf(i, "s").c_str(), "");
     g_nets[i].pass = g_prefs.getString(keyOf(i, "p").c_str(), "");
-    g_nets[i].haveMac = g_prefs.isKey(keyOf(i, "m").c_str()) &&
-                        g_prefs.getBytes(keyOf(i, "m").c_str(), g_nets[i].mac, 6) == 6;
+    g_nets[i].macCount = 0;
+    if (g_prefs.isKey(keyOf(i, "m").c_str())) {
+      uint8_t buf[MAX_MACS * 6];
+      size_t got = g_prefs.getBytes(keyOf(i, "m").c_str(), buf, sizeof(buf));
+      g_nets[i].macCount = got / 6;
+      if (g_nets[i].macCount > MAX_MACS) g_nets[i].macCount = MAX_MACS;
+      memcpy(g_nets[i].macs, buf, g_nets[i].macCount * 6);
+    }
   }
 }
 
@@ -121,12 +128,13 @@ static void saveNets() {
   for (int i = 0; i < g_netCount; i++) {
     g_prefs.putString(keyOf(i, "s").c_str(), g_nets[i].ssid);
     g_prefs.putString(keyOf(i, "p").c_str(), g_nets[i].pass);
-    if (g_nets[i].haveMac) g_prefs.putBytes(keyOf(i, "m").c_str(), g_nets[i].mac, 6);
+    if (g_nets[i].macCount > 0)
+      g_prefs.putBytes(keyOf(i, "m").c_str(), g_nets[i].macs, g_nets[i].macCount * 6);
   }
 }
 
 // Neues Netz nach vorn, vorhandenes aktualisieren. Aeltestes faellt raus.
-static void addNet(const String& ssid, const String& pass) {
+static int addNet(const String& ssid, const String& pass) {
   int found = -1;
   for (int i = 0; i < g_netCount; i++)
     if (g_nets[i].ssid == ssid) { found = i; break; }
@@ -139,23 +147,35 @@ static void addNet(const String& ssid, const String& pass) {
   } else {
     entry.ssid = ssid;
     entry.pass = pass;
-    entry.haveMac = false;
+    entry.macCount = 0;
     if (g_netCount < MAX_NETS) g_netCount++;
     for (int i = g_netCount - 1; i > 0; i--) g_nets[i] = g_nets[i - 1];
   }
   g_nets[0] = entry;
   saveNets();
+  return 0;
 }
 
-static void rememberMac(const uint8_t m[6]) {
-  if (g_current < 0) return;
-  Net& n = g_nets[g_current];
-  if (n.haveMac && memcmp(m, n.mac, 6) == 0) return;
-  memcpy(n.mac, m, 6);
-  n.haveMac = true;
-  g_prefs.putBytes(keyOf(g_current, "m").c_str(), n.mac, 6);
-  Serial.printf("[prefs] MAC-Adresse fuer \"%s\" gelernt: %s\n", n.ssid.c_str(), macToString(n.mac).c_str());
+// Neu gesehene Adresse nach vorn. Aeltere bleiben erhalten, damit ein Wecken auch dann
+// klappt, wenn macOS die private Adresse zwischenzeitlich gewechselt hat.
+static void addMacTo(int idx, const uint8_t m[6]) {
+  if (idx < 0 || idx >= g_netCount) return;
+  Net& n = g_nets[idx];
+  if (n.macCount > 0 && memcmp(m, n.macs[0], 6) == 0) return;   // unveraendert
+
+  int found = -1;
+  for (int i = 0; i < n.macCount; i++)
+    if (memcmp(m, n.macs[i], 6) == 0) { found = i; break; }
+
+  int upto = (found >= 0) ? found : (n.macCount < MAX_MACS ? n.macCount++ : MAX_MACS - 1);
+  for (int i = upto; i > 0; i--) memcpy(n.macs[i], n.macs[i - 1], 6);
+  memcpy(n.macs[0], m, 6);
+  g_prefs.putBytes(keyOf(idx, "m").c_str(), n.macs, n.macCount * 6);
+  Serial.printf("[prefs] MAC-Adresse fuer \"%s\": %s (%d gespeichert)\n",
+                n.ssid.c_str(), macToString(m).c_str(), n.macCount);
 }
+
+static void rememberMac(const uint8_t m[6]) { addMacTo(g_current, m); }
 
 // ---------------------------------------------------------------------------
 // Scan
@@ -302,25 +322,29 @@ static bool macReachable() {
   return true;
 }
 
+// Schickt an alle fuer dieses Netz bekannten Adressen, weil macOS die private
+// WLAN-Adresse wechseln kann und dann nur noch eine aeltere passt.
 static bool sendWol() {
-  if (g_current < 0 || !g_nets[g_current].haveMac) {
+  if (g_current < 0 || g_nets[g_current].macCount == 0) {
     Serial.println("[wol] fuer dieses Netz ist noch keine MAC-Adresse bekannt");
     return false;
   }
-  const uint8_t* mac = g_nets[g_current].mac;
-  uint8_t pkt[102];
-  memset(pkt, 0xFF, 6);
-  for (int i = 1; i <= 16; i++) memcpy(pkt + i * 6, mac, 6);
+  Net& n = g_nets[g_current];
   WiFiUDP udp;
   udp.begin(0);
-  for (int i = 0; i < WOL_BURST; i++) {
-    udp.beginPacket(IPAddress(255, 255, 255, 255), 9);
-    udp.write(pkt, sizeof(pkt));
-    udp.endPacket();
+  for (int r = 0; r < WOL_BURST; r++) {
+    for (int k = 0; k < n.macCount; k++) {
+      uint8_t pkt[102];
+      memset(pkt, 0xFF, 6);
+      for (int i = 1; i <= 16; i++) memcpy(pkt + i * 6, n.macs[k], 6);
+      udp.beginPacket(IPAddress(255, 255, 255, 255), 9);
+      udp.write(pkt, sizeof(pkt));
+      udp.endPacket();
+    }
     waitTicking(300);
   }
   udp.stop();
-  Serial.printf("[wol] %d Magic Packets an %s\n", WOL_BURST, macToString(mac).c_str());
+  Serial.printf("[wol] %d Runden an %d Adresse(n), neueste %s\n", WOL_BURST, n.macCount, macToString(n.macs[0]).c_str());
   return true;
 }
 
@@ -339,12 +363,14 @@ static void printStatus() {
                 WiFi.localIP().toString().c_str(), g_host.c_str(),
                 g_macReachable ? "ja" : "nein", g_netCount);
   for (int i = 0; i < g_netCount; i++)
-    Serial.printf("STATUSNET %d %s mac=%s\n", i + 1, g_nets[i].ssid.c_str(),
-                  g_nets[i].haveMac ? macToString(g_nets[i].mac).c_str() : "-");
+    Serial.printf("STATUSNET %d %s macs=%d neueste=%s\n", i + 1, g_nets[i].ssid.c_str(),
+                  g_nets[i].macCount,
+                  g_nets[i].macCount ? macToString(g_nets[i].macs[0]).c_str() : "-");
 }
 
 static void processLine(const String& line) {
   if (line.startsWith("PROV ")) {
+    // PROV <b64 ssid> <b64 pass> <b64 host>
     String rest = line.substring(5);
     int a = rest.indexOf(' '), b = rest.indexOf(' ', a + 1);
     if (a < 0) { Serial.println("PROV FEHLER format"); return; }
@@ -355,6 +381,17 @@ static void processLine(const String& line) {
     if (!host.isEmpty() && host != g_host) { g_host = host; g_prefs.putString("host", g_host); }
     addNet(ssid, pass);
     Serial.printf("PROV OK ssid=%s host=%s netze=%d\n", ssid.c_str(), g_host.c_str(), g_netCount);
+    return;
+  }
+  if (line.startsWith("MACADDR ")) {
+    // Die Adresse, die der Mac im *aktuell verbundenen* Netz benutzt. Wird erst nach dem
+    // Verbinden geschickt, damit sie eindeutig zu diesem Netz gehoert.
+    String v = line.substring(8); v.trim();
+    uint8_t m[6];
+    if (g_current < 0) { Serial.println("MACADDR FEHLER nicht verbunden"); return; }
+    if (!parseMac(v, m)) { Serial.println("MACADDR FEHLER format"); return; }
+    addMacTo(g_current, m);
+    Serial.printf("MACADDR OK %s fuer \"%s\"\n", macToString(m).c_str(), g_nets[g_current].ssid.c_str());
     return;
   }
   if (line.startsWith("CONNECT")) { g_reconnectRequested = true; Serial.println("CONNECT OK"); return; }
@@ -404,7 +441,7 @@ static String infoJson() {
   doc["uptime_s"] = millis() / 1000;
   doc["mac_host"] = g_host;
   doc["mac_reachable"] = g_macReachable;
-  doc["mac_addr"] = (g_current >= 0 && g_nets[g_current].haveMac) ? macToString(g_nets[g_current].mac) : "";
+  doc["mac_addr"] = (g_current >= 0 && g_nets[g_current].macCount > 0) ? macToString(g_nets[g_current].macs[0]) : "";
   doc["known_nets"] = g_netCount;
   if (RELAY_ENABLED) doc["relay"] = g_powered ? "on" : "off";
   String out;

@@ -37,6 +37,7 @@ LED an GPIO 2. Der Zustand wird deshalb über Blau angezeigt, "blau aus" heißt:
 | `RESET` | alles vergessen und neu starten |
 | `PROV <b64 ssid> <b64 pass> <b64 host>` | ein Netz hinzufügen (macht `mac/setup.sh`) |
 | `CONNECT` | jetzt verbinden |
+| `MACADDR <mac>` | Adresse des Macs für das gerade verbundene Netz merken |
 
 ## Optionen (`include/config.h`)
 
@@ -53,10 +54,14 @@ Neue Netze kommen über USB dazu, das älteste fällt raus.
 ## MAC-Adresse
 
 Zum Wecken zählt nicht die Hardware-Adresse des Macs, sondern die **private WLAN-Adresse**, die
-macOS **pro Netz** vergibt. Der ESP32 liest sie nach jedem erfolgreichen Ping aus der ARP-Tabelle
-und merkt sie sich getrennt für jedes Netz.
+macOS pro WLAN vergibt und gelegentlich wechselt. Der ESP32 bekommt sie auf zwei Wegen:
 
-Damit sie stabil bleibt: am Mac unter WLAN → Details → "Private WLAN-Adresse" auf **Fest** stellen.
+1. Der Mac schickt sie beim Einrichten mit (`ifconfig`), direkt nach dem Verbinden – so gehört
+   sie eindeutig zu dem Netz, in dem der ESP32 gelandet ist.
+2. Nach jedem erfolgreichen Ping frischt der ESP32 sie aus der ARP-Tabelle auf.
+
+Er behält je Netz die letzten drei Adressen und schickt das Weckpaket an alle. Damit wirkt ein
+Wechsel der privaten Adresse nicht sofort wie ein Ausfall.
 
 ## Sicherheit
 
