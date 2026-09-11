@@ -21,7 +21,9 @@ const KEY_LAST = ["last"];
 
 const MAX_WAIT_SEC = 25;
 const COMMAND_TTL_MS = 15 * 60_000;
-const ESP_ONLINE_SEC = 90;
+// Der ESP32 meldet sich alle ~25 s. 120 s lassen einen fehlgeschlagenen Anlauf samt
+// Wartezeit zu, ohne ihn gleich als offline zu melden.
+const ESP_ONLINE_SEC = 120;
 
 const USER_TOKEN = Deno.env.get("OOO_USER_TOKEN") ?? "";
 const DEVICE_TOKEN = Deno.env.get("OOO_DEVICE_TOKEN") ?? "";
