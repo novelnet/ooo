@@ -2,5 +2,15 @@
   "tasks": {
     "dev": "deno run --unstable-kv --allow-net --allow-env --watch main.ts",
     "check": "deno check main.ts"
+  },
+  "deploy": {
+    "org": "novelnet",
+    "app": "ooo"
   }
 }
+
+
+
+
+
+

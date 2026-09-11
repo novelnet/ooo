@@ -23,7 +23,7 @@
 
 #include "config.h"
 #include "secrets.h"
-#include "isrg_root_x1.h"
+#include "isrg_roots.h"
 
 static Preferences g_prefs;
 static String   g_ssid, g_pass, g_host;
@@ -324,7 +324,7 @@ static bool sendWol() {
 // ---------------------------------------------------------------------------
 static int request(const char* path, const String& body, String& response, uint32_t timeoutMs) {
   WiFiClientSecure client;
-  client.setCACert(ISRG_ROOT_X1);
+  client.setCACert(ISRG_ROOTS);
   client.setTimeout(timeoutMs / 1000);
   HTTPClient http;
   http.setTimeout(timeoutMs);
