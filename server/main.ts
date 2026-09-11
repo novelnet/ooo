@@ -157,12 +157,15 @@ async function handleMcp(req: Request): Promise<Response> {
   const ok = (result: unknown) => json({ jsonrpc: "2.0", id, result });
 
   switch (msg.method) {
-    case "initialize":
+    case "initialize": {
+      // Die vom Client gewuenschte Protokollversion zurueckspiegeln, sonst unsere.
+      const wanted = (msg.params as { protocolVersion?: string })?.protocolVersion;
       return ok({
-        protocolVersion: "2024-11-05",
+        protocolVersion: typeof wanted === "string" && wanted ? wanted : "2024-11-05",
         capabilities: { tools: {} },
         serverInfo: { name: "ooo", version: "1.0.0" },
       });
+    }
     case "notifications/initialized":
       return new Response(null, { status: 202 });
     case "ping":
@@ -197,9 +200,12 @@ Deno.serve(async (req) => {
   const deny = () => json({ error: "forbidden for this token" }, 403);
 
   try {
-    if ((path === "/mcp" || mcpInPath) && method === "POST") {
+    if (path === "/mcp" || mcpInPath) {
       if (role !== "user") return deny();
-      return await handleMcp(req);
+      if (method === "POST") return await handleMcp(req);
+      // Dieser Server ist zustandslos und bietet keinen SSE-Datenstrom an. Laut Protokoll
+      // gehoert darauf 405 mit Allow-Kopfzeile, nicht 404 – sonst brechen manche Clients ab.
+      return new Response(null, { status: 405, headers: { allow: "POST" } });
     }
 
     if (path === "/wake" && method === "POST") {
