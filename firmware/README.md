@@ -33,6 +33,7 @@ LED an GPIO 2. Der Zustand wird deshalb über Blau angezeigt, "blau aus" heißt:
 | Befehl | Wirkung |
 |---|---|
 | `STATUS` | Zustand ausgeben |
+| `SCAN` | sichtbare WLANs auflisten (`SCANNET <rssi> <kanal> <verschl.> <ssid>`) |
 | `RESET` | alles vergessen und neu starten |
 | `PROV <b64 ssid> <b64 pass> <b64 host> <mac>` | einrichten (macht `mac/setup.sh`) |
 
@@ -41,6 +42,7 @@ LED an GPIO 2. Der Zustand wird deshalb über Blau angezeigt, "blau aus" heißt:
 - `RELAY_ENABLED` (Standard `false`): zusätzlich Relais am Netzteil pulsen, siehe `docs/hardware.md`.
 - `WOL_BURST`, `WAKE_VERIFY_SEC`, Poll-Intervalle, Watchdog.
 - Getestet auf ESP32-D0WD-V3 (4 MB Flash, CH340). Anderes Board: `board =` in `platformio.ini`.
+- **Nur 2,4 GHz.** Der ESP32 kann kein 5-GHz-WLAN. Der Netz-Dialog zeigt deshalb nur, was er wirklich erreicht.
 
 ## Sicherheit
 

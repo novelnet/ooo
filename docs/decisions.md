@@ -57,3 +57,10 @@ Stromversorgung verdrahtet – per Software nicht schaltbar (am 2026-09-11 gemes
 durchgeschaltet, Rot blieb unverändert). Steuerbar ist nur Blau an GPIO 2. Deshalb bedeutet
 "blau aus" = nur Rot sichtbar = nicht bereit, und die übrigen Zustände unterscheiden sich über
 das Blinkmuster. Wer echte Farbwechsel will, löten eine zweite LED an einen freien GPIO.
+
+## 11. WLAN-Auswahl über den Scan des ESP32
+**Warum:** macOS 26 gibt den Namen des verbundenen WLANs nur an Programme mit Berechtigung für
+Ortungsdienste heraus; ohne sie liefert `ipconfig getsummary` wörtlich `<redacted>` (am
+2026-09-11 aufgetreten: der ESP32 versuchte, sich mit einem Netz namens "<redacted>" zu
+verbinden). Statt eine Systemberechtigung zu verlangen, scannt der ESP32 selbst und der Nutzer
+wählt aus einer Liste. Nebeneffekt: Es erscheinen nur 2,4-GHz-Netze, die er auch erreichen kann.

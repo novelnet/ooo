@@ -6,9 +6,15 @@ Ein Befehl richtet alles ein, der ESP32 muss dabei per USB am Mac stecken:
 bash mac/setup.sh
 ```
 
-Das Skript liest WLAN-Name, WLAN-Passwort (aus dem Schlüsselbund, fragt einmal nach deinem
-Passwort), den Namen des Macs und dessen MAC-Adresse aus und schickt alles über das Kabel an
-den ESP32. Zum Schluss aktiviert es Wake-on-LAN (`pmset womp 1`). Sonst läuft auf dem Mac nichts.
+Ablauf: Der ESP32 scannt selbst nach WLANs, du wählst deins in einem Fenster aus. Das Passwort
+kommt aus dem Schlüsselbund, sonst fragt ein Fenster danach. Dazu gehen der Name des Macs und
+seine MAC-Adresse über das Kabel. Zum Schluss aktiviert das Skript Wake-on-LAN (`pmset womp 1`).
+Sonst läuft auf dem Mac nichts.
+
+Warum der ESP32 scannt und nicht der Mac gefragt wird: macOS gibt den Namen des aktuellen WLANs
+nur an Programme heraus, die die Berechtigung für Ortungsdienste haben – sonst liefert es
+wörtlich `<redacted>`. Der Umweg über den ESP32 spart diese Berechtigung und zeigt nebenbei nur
+Netze, die er auch wirklich erreichen kann (2,4 GHz).
 
 Klappt es, leuchtet die blaue LED am ESP32 dauerhaft. Die rote LED daneben ist die
 Betriebsanzeige (PWR) und leuchtet immer.

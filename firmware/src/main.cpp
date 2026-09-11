@@ -119,6 +119,7 @@ static String b64decode(const String& in) {
 }
 
 static bool g_reconnectRequested = false;
+static void scanNetworks();
 
 static void printStatus() {
   Serial.printf("STATUS fw=%s ssid=%s verbunden=%s ip=%s mac=%s host=%s mac_erreichbar=%s\n",
@@ -157,6 +158,7 @@ static void processLine(const String& line) {
     ESP.restart();
   }
   if (line.startsWith("STATUS")) printStatus();
+  if (line.startsWith("SCAN")) scanNetworks();
 }
 
 static void handleSerial() {
@@ -176,6 +178,47 @@ static void waitTicking(uint32_t ms) {
 // ---------------------------------------------------------------------------
 // WLAN
 // ---------------------------------------------------------------------------
+// Letzter Abbruchgrund vom WLAN-Stack, damit man Passwortfehler von "Netz nicht
+// gefunden" unterscheiden kann (ESP32 funkt nur auf 2,4 GHz!).
+static uint8_t g_lastDisconnectReason = 0;
+
+static const char* wifiReasonText(uint8_t r) {
+  switch (r) {
+    case 2: case 15: case 204: case 205: return "Passwort falsch oder Handshake abgelehnt";
+    case 201: return "Netz nicht gefunden – ESP32 kann nur 2,4 GHz, nicht 5 GHz";
+    case 202: return "Authentifizierung fehlgeschlagen";
+    case 203: return "Access Point hat abgelehnt";
+    case 3:  case 4: return "Verbindung vom Router beendet";
+    default: return "unbekannt";
+  }
+}
+
+static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
+    g_lastDisconnectReason = info.wifi_sta_disconnected.reason;
+}
+
+// Zeigt, welche Netze der ESP32 sieht, und ob das gesuchte dabei ist.
+// Listet alle sichtbaren 2,4-GHz-Netze auf. Format je Zeile, SSID zuletzt (kann Leerzeichen
+// enthalten):  SCANNET <rssi> <kanal> <verschluesselung> <ssid>
+static void scanNetworks() {
+  bool wasConnected = WiFi.status() == WL_CONNECTED;
+  if (!wasConnected) { WiFi.mode(WIFI_STA); WiFi.disconnect(false); delay(100); }
+  int n = WiFi.scanNetworks();
+  if (n < 0) { delay(500); n = WiFi.scanNetworks(); }   // ein zweiter Versuch genuegt meist
+  for (int i = 0; i < n; i++) {
+    wifi_auth_mode_t e = WiFi.encryptionType(i);
+    const char* enc = e == WIFI_AUTH_OPEN ? "offen"
+                    : e == WIFI_AUTH_WPA2_PSK ? "WPA2"
+                    : e == WIFI_AUTH_WPA_WPA2_PSK ? "WPA/WPA2"
+                    : e == WIFI_AUTH_WPA3_PSK ? "WPA3"
+                    : e == WIFI_AUTH_WPA2_WPA3_PSK ? "WPA2/WPA3" : "andere";
+    Serial.printf("SCANNET %d %d %s %s\n", WiFi.RSSI(i), WiFi.channel(i), enc, WiFi.SSID(i).c_str());
+  }
+  Serial.printf("SCANEND %d\n", n);
+  WiFi.scanDelete();
+  if (wasConnected && WiFi.status() != WL_CONNECTED) WiFi.reconnect();
+}
 static bool connectWifi() {
   if (g_ssid.isEmpty()) return false;
   ledMode(LED_WORKING);
@@ -188,7 +231,8 @@ static bool connectWifi() {
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < 25000) waitTicking(50);
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WIFI FEHLER – Zugangsdaten pruefen (bash mac/setup.sh)");
+    Serial.printf("WIFI FEHLER grund=%u (%s)\n", g_lastDisconnectReason, wifiReasonText(g_lastDisconnectReason));
+    scanNetworks();
     ledMode(LED_ERROR);
     return false;
   }
@@ -359,6 +403,7 @@ void setup() {
   ledTick();
   if (RELAY_ENABLED) { pinMode(RELAY_PIN, OUTPUT); relaySet(true); }
 
+  WiFi.onEvent(onWifiEvent);
   loadPrefs();
   if (g_ssid.isEmpty()) waitForSetup();
   connectWifi();
