@@ -28,22 +28,45 @@ HOST=$(scutil --get LocalHostName)
 echo "   WLAN     : $SSID"
 echo "   Mac      : $HOST ($IFACE, $MAC)"
 
-echo "== WLAN-Passwort aus dem Schlüsselbund =="
-echo "   macOS fragt gleich nach deinem Passwort – das Passwort geht nur über das USB-Kabel zum ESP32."
-PASS=$(sudo security find-generic-password -wa "$SSID" /Library/Keychains/System.keychain 2>/dev/null)
-[ -n "$PASS" ] || { echo "❌ Passwort für \"$SSID\" nicht gefunden."; exit 1; }
-echo "   ok"
+echo "== WLAN-Passwort besorgen =="
+PASS=""
+# 1) Schlüsselbund. macOS zeigt dabei einen Freigabe-Dialog (Passwort oder Touch ID).
+for query in "-D AirPort network password -a $SSID" "-s AirPort -a $SSID" "-a $SSID"; do
+  # shellcheck disable=SC2086
+  OUT=$(security find-generic-password $query -w 2>&1)
+  if [ $? -eq 0 ] && [ -n "$OUT" ]; then PASS="$OUT"; echo "   aus dem Schlüsselbund gelesen."; break; fi
+done
+# 2) System-Schlüsselbund mit sudo, falls sudo gerade ohne Nachfrage darf.
+if [ -z "$PASS" ]; then
+  OUT=$(sudo -n security find-generic-password -a "$SSID" -w /Library/Keychains/System.keychain 2>/dev/null)
+  [ -n "$OUT" ] && { PASS="$OUT"; echo "   aus dem System-Schlüsselbund gelesen."; }
+fi
+# 3) Von Hand. Funktioniert immer.
+if [ -z "$PASS" ]; then
+  echo "   Schlüsselbund hat nichts geliefert (kein Eintrag oder Freigabe abgelehnt)."
+  read -rsp "   WLAN-Passwort für \"$SSID\" eingeben: " PASS
+  echo
+fi
+[ -n "$PASS" ] || { echo "❌ Ohne Passwort geht es nicht."; exit 1; }
 
 echo "== An den ESP32 senden =="
 if "$PY" "$ROOT/mac/provision.py" "$PORT" "$SSID" "$PASS" "$HOST" "$MAC"; then
-  echo "   ✅ ESP32 ist im WLAN. Die LED leuchtet jetzt dauerhaft."
+  echo "   ✅ ESP32 ist im WLAN. Die blaue LED leuchtet jetzt dauerhaft."
 else
-  echo "   ❌ Hat nicht geklappt. LED blinkt langsam = wartet weiter. Nochmal starten oder Kabel prüfen."
+  echo "   ❌ Hat nicht geklappt. Blaue LED aus oder Doppelblitz = nicht verbunden."
+  echo "      Passwort falsch? Dann einfach nochmal starten."
   exit 1
 fi
 
 echo "== Mac fürs Aufwecken vorbereiten =="
-sudo pmset -a womp 1 && echo "   Wake-on-LAN aktiviert."
+if sudo -n pmset -a womp 1 2>/dev/null; then
+  echo "   Wake-on-LAN aktiviert."
+elif sudo pmset -a womp 1 2>/dev/null; then
+  echo "   Wake-on-LAN aktiviert."
+else
+  echo "   ⚠️  Konnte Wake-on-LAN nicht setzen (sudo brauchte eine Eingabe)."
+  echo "      Bitte einmal selbst ausführen:  sudo pmset -a womp 1"
+fi
 
 echo
 echo "Fertig. Der ESP32 braucht ab jetzt nur noch Strom, egal woher."
