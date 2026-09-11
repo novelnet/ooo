@@ -77,3 +77,15 @@ bleibt praktisch immer genau eins übrig; bei mehreren gewinnt das oberste der M
 (alle 10 s ein `ls` auf /dev), aber **opt-in** über `--install-auto` – der Standard bleibt der eine
 Befehl. Der Dienst reagiert nur auf neu erschienene Geräte, weil das Öffnen der seriellen
 Schnittstelle den ESP32 neu startet.
+
+## 14. Die MAC-Adresse fürs Wecken muss gelernt werden, nicht übertragen
+**Beobachtung (2026-09-11, Test im iPhone-Hotspot):** Die Hardware-Adresse des Macs ist
+`f4:d4:88:84:76:a6`, im Netz benutzt er aber `12:ac:41:9b:31:54`. macOS vergibt pro WLAN eine
+**private, zufällige WLAN-Adresse** (erkennbar am gesetzten "locally administered"-Bit).
+**Folge:** Ein Magic Packet an die Hardware-Adresse weckt den Mac **nicht**. Richtig ist die
+Adresse aus der ARP-Tabelle, die der ESP32 sich nach jedem erfolgreichen Ping merkt. Die beim
+Einrichten übertragene Hardware-Adresse ist deshalb nur ein Startwert und wird überschrieben,
+sobald der Mac einmal wach im selben Netz gesehen wurde.
+**Empfehlung fürs Heimnetz:** In den WLAN-Einstellungen des Macs "Private WLAN-Adresse" auf
+"Fest" stellen (nicht "Rotierend"), sonst ändert sie sich und das Wecken schlägt fehl, bis der
+Mac wieder einmal wach gesehen wurde.

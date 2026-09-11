@@ -44,6 +44,14 @@ LED an GPIO 2. Der Zustand wird deshalb über Blau angezeigt, "blau aus" heißt:
 - Getestet auf ESP32-D0WD-V3 (4 MB Flash, CH340). Anderes Board: `board =` in `platformio.ini`.
 - **Nur 2,4 GHz.** Der ESP32 kann kein 5-GHz-WLAN. Der Netz-Dialog zeigt deshalb nur, was er wirklich erreicht.
 
+## MAC-Adresse
+
+Zum Wecken zählt nicht die Hardware-Adresse des Macs, sondern die **private WLAN-Adresse**, die
+macOS pro Netz vergibt. Der ESP32 liest sie nach jedem erfolgreichen Ping aus der ARP-Tabelle und
+merkt sie sich. Die beim Einrichten übertragene Adresse ist nur ein Startwert.
+
+Damit sie stabil bleibt: am Mac unter WLAN → Details → "Private WLAN-Adresse" auf **Fest** stellen.
+
 ## Sicherheit
 
 - Root-CA gepinnt (ISRG Root X1, bis 2035), kein `setInsecure()`.
