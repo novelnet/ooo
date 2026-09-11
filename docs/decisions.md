@@ -25,9 +25,15 @@ ESP32 ist mehr Code und mehr Fehlerquellen für wenig Gewinn.
 **Warum:** Der Token im iPhone-Kurzbefehl (iCloud!) darf nicht das sein, was auf dem ESP32
 im Flash liegt. Kleinster Schaden pro Leck.
 
-## 9. WLAN per Setup-Portal, MAC-Adresse gelernt
-**Warum:** Nichts eintippen, nichts neu flashen, wenn sich das WLAN ändert. Der ESP32 merkt
-sich Zugangsdaten und die MAC des Macs selbst (NVS). Nur URL + Device-Token kommen aus 1Password.
+## 9. Einrichtung über das USB-Kabel statt Setup-WLAN
+**Optionen:** (a) WLAN-Setup-Portal am Handy (WiFiManager), (b) Zugangsdaten fest in die Firmware,
+(c) der Mac schickt alles über USB.
+**Entscheidung (2026-09-11):** (c). (a) war dem User zu umständlich, (b) heißt neu flashen bei jedem
+WLAN-Wechsel.
+**Warum:** Anstecken, einen Befehl, LED leuchtet. Der Mac kennt WLAN-Name, Passwort (Schlüsselbund),
+seinen Namen und seine MAC-Adresse ohnehin. Spart zusätzlich 50 % Flash (kein WiFiManager).
+**Preis:** Zum Einrichten muss der ESP32 einmal am Mac stecken, und das Skript braucht einmal `sudo`
+für den Schlüsselbund.
 
 ## 8. Mac-Status per Ping vom ESP32, kein Heartbeat auf dem Mac
 **Warum:** Null Setup auf dem Mac, kein dritter Token, kein LaunchAgent. mDNS + Ping im LAN

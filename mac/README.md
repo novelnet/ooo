@@ -1,13 +1,19 @@
 # mac
 
+Ein Befehl richtet alles ein, der ESP32 muss dabei per USB am Mac stecken:
+
 ```bash
-bash mac/setup.sh     # setzt `pmset womp 1` (Wake for network access)
+bash mac/setup.sh
 ```
 
-Mehr läuft auf dem Mac nicht. Er bleibt wach, solange gearbeitet wird (Amphetamine, Sessions);
-schläft er, weckt ihn der Kurzbefehl.
+Das Skript liest WLAN-Name, WLAN-Passwort (aus dem Schlüsselbund, fragt einmal nach deinem
+Passwort), den Namen des Macs und dessen MAC-Adresse aus und schickt alles über das Kabel an
+den ESP32. Zum Schluss aktiviert es Wake-on-LAN (`pmset womp 1`). Sonst läuft auf dem Mac nichts.
 
-Voraussetzungen für Wake-on-LAN bei Apple:
+Klappt es, leuchtet die LED am ESP32 dauerhaft.
+
+## Voraussetzungen für Wake-on-LAN bei Apple
+
 - Netzteil angeschlossen.
 - Ethernet (USB-C-Adapter) **oder** im WLAN ein Apple TV/HomePod (Bonjour Sleep Proxy).
   Reines WLAN ohne Proxy wacht nicht auf. Dann: Adapter, oder Relais-Option in der Firmware.

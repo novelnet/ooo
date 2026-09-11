@@ -18,9 +18,10 @@ SSH, Claude Code Remote Control) es wach; das ist nicht Aufgabe von ooo.
   schreibt in eine Queue. Funktioniert aus Mobilfunk mit CGNAT.
 - **Status per Ping vom ESP32:** Auf dem Mac läuft nichts. Schläft er, scheitert schon die
   mDNS-Auflösung, das ist die Antwort.
-- **Keine Konfiguration von Hand:** WLAN über Setup-Portal (`ooo-setup`) auf dem ESP32 gespeichert,
-  MAC-Adresse des Mac aus der ARP-Tabelle gelernt. Nur URL + Device-Token werden beim Flashen
-  aus 1Password gerendert.
+- **Keine Konfiguration von Hand:** Der Mac schickt WLAN-Zugangsdaten, seinen Namen und seine
+  MAC-Adresse über das USB-Kabel an den ESP32 (`mac/setup.sh`), der speichert sie im Flash.
+  Wechselt der Mac später das Interface, frischt der ESP32 die MAC-Adresse per ARP selbst auf.
+  Nur URL + Device-Token werden beim Flashen aus 1Password gerendert.
 - **Relais nur optional:** `RELAY_ENABLED true` schaltet zusätzlich das Netzteil aus/an
   (weckt Apple Silicon immer, auch ohne Ethernet). Standard ist aus, siehe `docs/hardware.md`.
 
