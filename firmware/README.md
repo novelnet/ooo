@@ -41,7 +41,7 @@ LED an GPIO 2. Der Zustand wird deshalb über Blau angezeigt, "blau aus" heißt:
 
 ## Optionen (`include/config.h`)
 
-- `RELAY_ENABLED` (Standard `false`): zusätzlich Relais am Netzteil pulsen, siehe `docs/hardware.md`.
+- `RELAY_ENABLED` (Standard `false`): zusätzlich ein Relais am Netzteil pulsen, siehe unten.
 - `WOL_BURST`, `WAKE_VERIFY_SEC`, Poll-Intervalle, Watchdog.
 - Getestet auf ESP32-D0WD-V3 (4 MB Flash, CH340). Anderes Board: `board =` in `platformio.ini`.
 - **Nur 2,4 GHz.** Der ESP32 kann kein 5-GHz-WLAN. Der Netz-Dialog zeigt deshalb nur, was er wirklich erreicht.
@@ -68,3 +68,31 @@ Wechsel der privaten Adresse nicht sofort wie ein Ausfall.
 - Root-CA gepinnt (ISRG Root X1, bis 2035), kein `setInsecure()`.
 - Device-Token kann nur Kommandos abholen und bestätigen.
 - Das WLAN-Passwort liegt im Flash des ESP32 und kommt nur über das USB-Kabel dorthin.
+
+## Hardware
+
+| Teil | Zweck |
+|---|---|
+| ESP32 DevKit | WLAN, wartet auf Befehle, schickt Magic Packets, pingt den Mac |
+| USB-Kabel zum MacBook | Strom **und** Einrichtung; der Mac versorgt ihn auch im Schlaf |
+| optional: USB-C-Ethernet-Adapter am Mac | macht Wake-on-LAN bei Apple zuverlässig |
+
+Getestet auf einem ESP32-D0WD-V3 mit 4 MB Flash und CH340-Chip.
+
+## Option: Relais am Netzteil
+
+Nur nötig, falls Wake-on-LAN im Alltag nicht reicht. Strom anschließen weckt und startet
+Apple-Silicon-Macs immer; ein Puls „aus → an" von acht Sekunden genügt. Aktivieren mit
+`RELAY_ENABLED true` in `include/config.h`.
+
+```
+ESP32 GPIO26 ──► IN    Relais-Modul 5 V (Optokoppler, 3,3-V-tauglich, Kontakte 250 V / 10 A)
+ESP32 5V     ──► VCC
+ESP32 GND    ──► GND
+COM / NO     ──► unterbricht nur L (Phase) zum MacBook-Netzteil; N und PE bleiben durchgehend
+```
+
+**230 V sind lebensgefährlich.** Isoliertes Gehäuse, Zugentlastung, und nur mit
+Elektro-Erfahrung. Die sichere Variante ist ein fertiger Schaltstecker mit ESP32 (Athom
+ESP32-Plug, Shelly Plug S); die Firmware läuft darauf, nur `RELAY_PIN` und `LED_PIN` anpassen.
+Schaltet das Relais den Mac beim Start stromlos, `RELAY_ACTIVE_LOW` umdrehen.
