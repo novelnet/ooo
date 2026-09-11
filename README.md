@@ -22,7 +22,7 @@ Kurzbefehl „Mac wecken“ auf dem iPhone → ESP32 im Heimnetz schickt Wake-on
 
 ## Einrichten
 
-1. `brew install 1password-cli` → `scripts/secrets.sh init` → `scripts/secrets.sh render`
+1. `brew install --cask 1password-cli` → `scripts/secrets.sh init` → `scripts/secrets.sh render`
 2. `bash mac/setup.sh`
 3. API deployen: [`api/README.md`](api/README.md)
 4. ESP32 flashen: `cd firmware && pio run -t upload`, dann mit dem Handy ins WLAN `ooo-setup` und Heim-WLAN wählen

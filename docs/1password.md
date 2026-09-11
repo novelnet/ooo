@@ -6,7 +6,7 @@ dass ein Agent auf dem Mac an Touch ID scheitert.
 ## 1. CLI einrichten (einmalig auf dem Mac)
 
 ```bash
-brew install 1password-cli
+brew install --cask 1password-cli
 # 1Password-App → Einstellungen → Entwickler → „Mit 1Password CLI integrieren“ aktivieren
 op whoami        # fragt beim ersten Mal per Touch ID / Passwort
 ```

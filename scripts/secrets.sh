@@ -6,7 +6,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VAULT="${OOO_VAULT:-Dev}"; ITEM="ooo"
-command -v op >/dev/null || { echo "1Password CLI fehlt:  brew install 1password-cli  (dann in der 1Password-App: Einstellungen → Entwickler → CLI-Integration)"; exit 1; }
+command -v op >/dev/null || { echo "1Password CLI fehlt:  brew install --cask 1password-cli  (dann in der 1Password-App: Einstellungen → Entwickler → CLI-Integration)"; exit 1; }
 
 case "${1:-}" in
   init)
