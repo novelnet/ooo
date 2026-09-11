@@ -1,8 +1,0 @@
-# Nur der Teil, der für ooo relevant ist. `supabase init` würde hier eine
-# vollständige Datei erzeugen – die Defaults sind für uns in Ordnung.
-project_id = "ooo"
-
-[functions.ooo]
-# Auth macht die Funktion selbst (drei getrennte Bearer-Tokens),
-# deshalb keine Supabase-JWT-Prüfung davor.
-verify_jwt = false

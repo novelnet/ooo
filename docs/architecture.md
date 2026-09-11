@@ -6,7 +6,7 @@ SSH, Claude Code Remote Control) es wach; das ist nicht Aufgabe von ooo.
 ## Ablauf „Mac wecken“
 
 1. Handy → `POST /wake` → Zeile in `ooo_commands`.
-2. ESP32 hängt in `POST /poll` (Long-Poll bis 25 s), bekommt das Kommando nach ≤ 1–2 s.
+2. ESP32 hängt in `POST /poll` (bis 25 s). `kv.watch` weckt den Server, sobald der Befehl da ist; gemessene Latenz unter 1 s.
 3. ESP32 prüft per mDNS + Ping, ob der Mac schon wach ist. Wenn nicht: 5 Magic Packets an
    die gelernte MAC-Adresse, dann bis 45 s auf Ping-Antwort warten.
 4. `POST /ack` mit `mac-up`, `already-awake` oder `no-ping-response`.
@@ -14,8 +14,10 @@ SSH, Claude Code Remote Control) es wach; das ist nicht Aufgabe von ooo.
 
 ## Warum so
 
-- **Cloud-Relay statt Port-Freigabe:** ESP32 baut nur ausgehende Verbindungen auf, das Handy
-  schreibt in eine Queue. Funktioniert aus Mobilfunk mit CGNAT.
+- **Briefkasten statt Port-Freigabe:** Der ESP32 baut nur ausgehende Verbindungen auf, Handy und
+  Claude legen Befehle ab. Funktioniert aus Mobilfunk mit CGNAT.
+- **Deno Deploy statt Supabase:** siehe Entscheidung 15. Kostenlos, kein Server, kein Datenbankschema.
+- **MCP eingebaut:** Claude kann den Mac über das Werkzeug `wake_mac` selbst wecken.
 - **Status per Ping vom ESP32:** Auf dem Mac läuft nichts. Schläft er, scheitert schon die
   mDNS-Auflösung, das ist die Antwort.
 - **Keine Konfiguration von Hand:** Der Mac schickt WLAN-Zugangsdaten, seinen Namen und seine

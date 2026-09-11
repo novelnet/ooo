@@ -5,9 +5,9 @@
   committen oder Tokens in Docs schreiben.
 - Einfach und clean halten: WoL ist der Weckweg, das Relais bleibt eine abschaltbare Option,
   auf dem Mac läuft nichts außer `womp 1`.
-- Struktur: `firmware/` (PlatformIO, ESP32) · `api/` (Supabase Edge Function + Migration) ·
+- Struktur: `firmware/` (PlatformIO, ESP32) · `server/` (Deno Deploy + Deno KV + MCP) ·
   `mac/` (setup.sh) · `ios/` · `scripts/` · `docs/`.
 - Entscheidungen stehen in `docs/decisions.md` – bei Änderungen dort ergänzen.
 - Firmware prüfen: `cd firmware && pio run` (secrets.h aus Template rendern oder Dummy anlegen).
-- API prüfen: `cd api/supabase/functions/ooo && deno check index.ts`.
+- Server prüfen: `cd server && deno check main.ts`.
 - Hardware schaltet 230 V: Warnhinweise in `docs/hardware.md` nicht entschärfen.

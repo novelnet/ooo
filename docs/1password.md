@@ -9,7 +9,7 @@ dass ein Agent auf dem Mac an Touch ID scheitert.
 brew install --cask 1password-cli
 # 1Password-App → Einstellungen → Entwickler → „Mit 1Password CLI integrieren“ aktivieren
 op signin --account my.1password.com   # einmalig, Freigabe per Touch ID
-op whoami --account my.1password.com
+op vault list --account my.1password.com   # op whoami meldet bei App-Integration faelschlich einen Fehler
 ```
 
 Es sind zwei Konten registriert (privat + Firma). `scripts/secrets.sh` nutzt deshalb immer
@@ -28,9 +28,9 @@ op run --env-file=.env.tpl -- npm run dev # oder: Secrets nur als Prozess-Umgebu
 Für ooo: `scripts/secrets.sh init|render|push`. Item-Layout:
 
 ```
-op://Dev/ooo/supabase/project-ref
-op://Dev/ooo/tokens/user          (Handy-Kurzbefehl)
-op://Dev/ooo/tokens/device        (ESP32)
+op://Personal/ooo/supabase/project-ref
+op://Personal/ooo/tokens/user          (Handy-Kurzbefehl)
+op://Personal/ooo/tokens/device        (ESP32)
 ```
 
 ## 3. Headless: Service Account statt Touch ID

@@ -1,0 +1,14 @@
+- generic [ref=f9e3]:
+  - link [ref=f9e4] [cursor=pointer]:
+    - /url: https://deno.com
+    - img "Deno Deploy" [ref=f9e5]
+  - generic [ref=f9e8]:
+    - generic [ref=f9e9]:
+      - heading "Sign in" [level=1] [ref=f9e10]
+      - paragraph [ref=f9e11]: Don't have an account yet? We'll create one for you when you sign in.
+    - generic [ref=f9e12]:
+      - paragraph [ref=f9e13]: Verification failed. Please complete the challenge below and try again. If no challenge appears, allow scripts from challenges.cloudflare.com.
+      - button "Sign in with GitHub" [disabled] [ref=f9e14]
+      - button "Sign in with Google" [disabled] [ref=f9e17]
+    - paragraph [ref=f9e20]: By signing in, you agree to our Terms of Service and Privacy Policy.
+  - 'button "Theme: System" [ref=f9e22]'

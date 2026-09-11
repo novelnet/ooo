@@ -89,3 +89,21 @@ sobald der Mac einmal wach im selben Netz gesehen wurde.
 **Empfehlung fürs Heimnetz:** In den WLAN-Einstellungen des Macs "Private WLAN-Adresse" auf
 "Fest" stellen (nicht "Rotierend"), sonst ändert sie sich und das Wecken schlägt fehl, bis der
 Mac wieder einmal wach gesehen wurde.
+
+## 15. Deno Deploy statt Supabase
+**Entscheidung (2026-09-11):** Der Briefkasten läuft auf Deno Deploy mit Deno KV.
+**Warum:** Supabase schied aus Kostengründen aus – pro Konto ist nur **eine** kostenlose
+Organisation erlaubt, und die vorhandene hatte ihre zwei Projekte bereits belegt; ein weiteres
+hätte 10 $/Monat gekostet. Ein Mitlaufen im Produktivprojekt fluss.ai wollte der Nutzer nicht
+(zwei Fremdtabellen in der Produktionsdatenbank). Deno Deploy ist dauerhaft kostenlos
+(1 Mio. Anfragen/Monat gegen unseren Bedarf von ~130.000), bringt den Schlüsselspeicher mit und
+der vorhandene Code war bereits Deno-TypeScript.
+**Nebengewinn:** `kv.watch` ersetzt die sekündliche Datenbankabfrage aus dem Supabase-Entwurf.
+Der Server verbraucht beim Warten praktisch keine Rechenzeit.
+
+## 16. MCP direkt im Briefkasten
+**Warum:** Claude soll den Mac selbst wecken können. Ein MCP-Server braucht einen Endpunkt im
+Internet – Briefkastendienste wie ntfy oder Upstash können das nicht. Deshalb ist MCP eine
+weitere Route derselben Anwendung, rund 60 Zeilen, ohne zusätzliche Abhängigkeit.
+**Anmeldung:** Bearer-Schlüssel im Kopf der Anfrage (Claude Code) oder im Pfad `/mcp/<token>`
+für Clients, die keine Kopfzeilen mitschicken können.
