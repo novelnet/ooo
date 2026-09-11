@@ -47,12 +47,12 @@ def prov(port, ssid, password, host, mac):
     ok = False
     with open_port(port) as s:
         s.write(line.encode()); s.flush()
-        end = time.time() + 60
+        end = time.time() + 120
         while time.time() < end:
             raw = s.readline().decode("utf-8", "replace").strip()
             if not raw:
                 continue
-            if raw.startswith(("PROV ", "WIFI ", "SCANEND")):
+            if raw.startswith(("PROV ", "WIFI ", "[wifi] Versuch")):
                 print("   " + raw)
             if raw.startswith("WIFI OK"):
                 ok = True

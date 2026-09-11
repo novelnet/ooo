@@ -119,7 +119,7 @@ static String b64decode(const String& in) {
 }
 
 static bool g_reconnectRequested = false;
-static void scanNetworks();
+static bool scanNetworks(bool quiet = false);
 
 static void printStatus() {
   Serial.printf("STATUS fw=%s ssid=%s verbunden=%s ip=%s mac=%s host=%s mac_erreichbar=%s\n",
@@ -158,7 +158,7 @@ static void processLine(const String& line) {
     ESP.restart();
   }
   if (line.startsWith("STATUS")) printStatus();
-  if (line.startsWith("SCAN")) scanNetworks();
+  if (line.startsWith("SCAN")) scanNetworks(false);
 }
 
 static void handleSerial() {
@@ -201,12 +201,15 @@ static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
 // Zeigt, welche Netze der ESP32 sieht, und ob das gesuchte dabei ist.
 // Listet alle sichtbaren 2,4-GHz-Netze auf. Format je Zeile, SSID zuletzt (kann Leerzeichen
 // enthalten):  SCANNET <rssi> <kanal> <verschluesselung> <ssid>
-static void scanNetworks() {
+static bool scanNetworks(bool quiet) {
   bool wasConnected = WiFi.status() == WL_CONNECTED;
   if (!wasConnected) { WiFi.mode(WIFI_STA); WiFi.disconnect(false); delay(100); }
   int n = WiFi.scanNetworks();
   if (n < 0) { delay(500); n = WiFi.scanNetworks(); }   // ein zweiter Versuch genuegt meist
+  bool found = false;
   for (int i = 0; i < n; i++) {
+    if (WiFi.SSID(i) == g_ssid) found = true;
+    if (quiet) continue;
     wifi_auth_mode_t e = WiFi.encryptionType(i);
     const char* enc = e == WIFI_AUTH_OPEN ? "offen"
                     : e == WIFI_AUTH_WPA2_PSK ? "WPA2"
@@ -215,24 +218,39 @@ static void scanNetworks() {
                     : e == WIFI_AUTH_WPA2_WPA3_PSK ? "WPA2/WPA3" : "andere";
     Serial.printf("SCANNET %d %d %s %s\n", WiFi.RSSI(i), WiFi.channel(i), enc, WiFi.SSID(i).c_str());
   }
-  Serial.printf("SCANEND %d\n", n);
+  if (!quiet) Serial.printf("SCANEND %d\n", n);
   WiFi.scanDelete();
   if (wasConnected && WiFi.status() != WL_CONNECTED) WiFi.reconnect();
+  return found;
 }
 static bool connectWifi() {
   if (g_ssid.isEmpty()) return false;
   ledMode(LED_WORKING);
-  Serial.printf("[wifi] verbinde mit %s …\n", g_ssid.c_str());
-  WiFi.disconnect(true);
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.setHostname("ooo-esp");
-  WiFi.begin(g_ssid.c_str(), g_pass.c_str());
-  uint32_t start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 25000) waitTicking(50);
+
+  // Mehrere Anlaeufe: Hotspots und Repeater sind nicht immer sofort da.
+  for (int versuch = 1; versuch <= 3; versuch++) {
+    Serial.printf("[wifi] Versuch %d von 3: verbinde mit %s …\n", versuch, g_ssid.c_str());
+    WiFi.disconnect(true);
+    waitTicking(300);
+    WiFi.begin(g_ssid.c_str(), g_pass.c_str());
+    uint32_t start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) waitTicking(50);
+    if (WiFi.status() == WL_CONNECTED) break;
+    Serial.printf("[wifi] Versuch %d fehlgeschlagen, grund=%u (%s)\n",
+                  versuch, g_lastDisconnectReason, wifiReasonText(g_lastDisconnectReason));
+    if (versuch < 3) waitTicking(3000);
+  }
+
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.printf("WIFI FEHLER grund=%u (%s)\n", g_lastDisconnectReason, wifiReasonText(g_lastDisconnectReason));
-    scanNetworks();
+    bool sichtbar = scanNetworks(true);
+    Serial.printf("WIFI FEHLER grund=%u (%s) netz_sichtbar=%s\n",
+                  g_lastDisconnectReason, wifiReasonText(g_lastDisconnectReason), sichtbar ? "ja" : "nein");
+    if (!sichtbar)
+      Serial.println("WIFI HINWEIS Netz gerade nicht in Reichweite. Bei iPhone-Hotspots: Fenster "
+                     "\"Persoenlicher Hotspot\" offen lassen, sonst schlaeft der Funk ein.");
     ledMode(LED_ERROR);
     return false;
   }
