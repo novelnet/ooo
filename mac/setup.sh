@@ -87,7 +87,12 @@ return item 1 of c
 APPLESCRIPT
 )
 fi
-[ -n "$SSID" ] || { echo "❌ Kein WLAN ausgewählt."; exit 1; }
+if [ -z "$SSID" ]; then
+  echo "❌ Kein WLAN ausgewählt."
+  echo "   Tipp zum Testen unterwegs: iPhone-Hotspot einschalten (in den iPhone-Einstellungen"
+  echo "   'Maximale Kompatibilität' aktivieren, das schaltet ihn auf 2,4 GHz) und nochmal starten."
+  exit 1
+fi
 
 echo "== Daten vom Mac =="
 MAC=$(networksetup -getmacaddress "$IFACE" 2>/dev/null | awk '{print $3}')
