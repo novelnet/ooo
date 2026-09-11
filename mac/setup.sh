@@ -22,20 +22,38 @@ echo "   gefunden: $PORT"
 echo "== WLANs suchen (der ESP32 scannt selbst, dauert ~15 s) =="
 "$PY" "$ROOT/mac/provision.py" scan "$PORT" > "$TMP/nets.txt" || { echo "❌ Scan fehlgeschlagen."; exit 1; }
 COUNT=$(wc -l < "$TMP/nets.txt" | tr -d ' ')
-echo "   $COUNT Netze gefunden (nur 2,4 GHz – mehr kann der ESP32 nicht)"
+echo "   $COUNT Netze gefunden (nur 2,4 GHz – mehr kann der ESP32 nicht), stärkstes zuerst:"
+nl -w6 -s'  ' "$TMP/nets.txt" | sed 's/^/   /'
 
-# Auswahl per macOS-Fenster. Die Liste kommt aus einer Datei, damit Sonderzeichen passen.
-SSID=$(OOO_NETS="$TMP/nets.txt" osascript <<'APPLESCRIPT'
+# Auswahlfenster. "activate" holt es nach vorn, sonst erscheint es hinter anderen Fenstern.
+echo "   → Auswahlfenster geöffnet (ggf. hinter diesem Fenster nachsehen)."
+SSID=$(OOO_NETS="$TMP/nets.txt" osascript <<'APPLESCRIPT' 2>/dev/null
 set f to POSIX file (system attribute "OOO_NETS")
 set t to read f as «class utf8»
 set AppleScript's text item delimiters to linefeed
 set L to text items of t
 if L's last item = "" then set L to items 1 thru -2 of L
-set c to choose from list L with prompt "Mit welchem WLAN soll sich der ESP32 verbinden?" with title "ooo einrichten"
+tell application "System Events"
+    activate
+    set c to choose from list L with prompt "Mit welchem WLAN soll sich der ESP32 verbinden?" with title "ooo einrichten"
+end tell
 if c is false then return ""
 return item 1 of c
 APPLESCRIPT
 )
+
+# Falls das Fenster nicht kam oder abgebrochen wurde: Nummer aus der Liste eintippen.
+if [ -z "$SSID" ]; then
+  NUM=$(osascript <<'APPLESCRIPT' 2>/dev/null
+tell application "System Events"
+    activate
+    display dialog "Nummer des WLANs aus der Liste im Terminal:" default answer "1" with title "ooo einrichten"
+end tell
+return text returned of result
+APPLESCRIPT
+)
+  [ -n "$NUM" ] && SSID=$(sed -n "${NUM}p" "$TMP/nets.txt")
+fi
 [ -n "$SSID" ] || { echo "❌ Kein WLAN ausgewählt."; exit 1; }
 echo "   gewählt: $SSID"
 
