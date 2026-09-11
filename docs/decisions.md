@@ -64,3 +64,16 @@ Ortungsdienste heraus; ohne sie liefert `ipconfig getsummary` wörtlich `<redact
 2026-09-11 aufgetreten: der ESP32 versuchte, sich mit einem Netz namens "<redacted>" zu
 verbinden). Statt eine Systemberechtigung zu verlangen, scannt der ESP32 selbst und der Nutzer
 wählt aus einer Liste. Nebeneffekt: Es erscheinen nur 2,4-GHz-Netze, die er auch erreichen kann.
+
+## 12. WLAN automatisch über die Schnittmenge bestimmen
+**Warum:** Der Nutzer will nicht jedes Mal auswählen. Der Mac gibt zwar nicht heraus, in welchem
+Netz er steckt (Ortungsdienste-Sperre, siehe 11), aber `networksetup -listpreferredwirelessnetworks`
+liefert ohne Berechtigung alle bekannten Netze in Reihenfolge. Geschnitten mit dem Scan des ESP32
+bleibt praktisch immer genau eins übrig; bei mehreren gewinnt das oberste der Mac-Reihenfolge.
+`--waehlen` erzwingt weiterhin die Liste.
+
+## 13. Optionaler Hintergrunddienst statt Befehl
+**Warum:** "Automatisch beim Anstecken" geht nur mit einem Dienst auf dem Mac. Deshalb `com.ooo.watch`
+(alle 10 s ein `ls` auf /dev), aber **opt-in** über `--install-auto` – der Standard bleibt der eine
+Befehl. Der Dienst reagiert nur auf neu erschienene Geräte, weil das Öffnen der seriellen
+Schnittstelle den ESP32 neu startet.

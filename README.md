@@ -15,7 +15,7 @@ Kurzbefehl „Mac wecken“ auf dem iPhone → ESP32 im Heimnetz schickt Wake-on
 |---|---|
 | `firmware/` | ESP32: Long-Poll, WoL, Ping-Check, Einrichtung über USB. Relais optional |
 | `api/` | Supabase Edge Function + Migration |
-| `mac/` | `setup.sh`: richtet den ESP32 über USB ein und aktiviert Wake-on-LAN |
+| `mac/` | `setup.sh`: richtet den ESP32 über USB ein, optional automatisch beim Anstecken |
 | `ios/` | Kurzbefehl-Anleitung |
 | `scripts/` | `secrets.sh`: alle Secrets in 1Password, Templates rendern |
 | `docs/` | Architektur, Entscheidungen, Roadmap, Hardware, 1Password |
@@ -25,7 +25,8 @@ Kurzbefehl „Mac wecken“ auf dem iPhone → ESP32 im Heimnetz schickt Wake-on
 1. `brew install --cask 1password-cli` → `scripts/secrets.sh init` → `scripts/secrets.sh render`
 2. API deployen: [`api/README.md`](api/README.md)
 3. ESP32 per USB anstecken und flashen: `cd firmware && pio run -t upload`
-4. `bash mac/setup.sh` – überträgt WLAN, Mac-Name und MAC-Adresse über das Kabel. Blaue LED leuchtet = fertig.
+4. `bash mac/setup.sh` – wählt das WLAN selbst und überträgt alles über das Kabel. Blaue LED leuchtet = fertig.
+   Mit `bash mac/setup.sh --install-auto` genügt künftig Anstecken, ganz ohne Befehl.
 5. Handy: [`ios/README.md`](ios/README.md)
 
 **Wichtig:** WoL über WLAN funktioniert bei Apple nur mit Apple TV/HomePod im Netz oder per

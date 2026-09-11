@@ -10,24 +10,69 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
+MODE=normal
+for a in "$@"; do
+  case "$a" in
+    --waehlen)     MODE=waehlen ;;   # WLAN von Hand aus der Liste waehlen
+    --auto)        MODE=auto ;;      # vom Hintergrunddienst aufgerufen, keine Rueckfragen
+    --install-auto) MODE=install ;;  # Hintergrunddienst einrichten
+    --remove-auto) MODE=remove ;;
+  esac
+done
+
+AGENT="$HOME/Library/LaunchAgents/com.ooo.watch.plist"
+if [ "$MODE" = install ]; then
+  sed "s|__OOO_DIR__|$ROOT/mac|g" "$ROOT/mac/launchd/com.ooo.watch.plist" > "$AGENT"
+  launchctl bootout "gui/$(id -u)/com.ooo.watch" 2>/dev/null
+  launchctl bootstrap "gui/$(id -u)" "$AGENT" && echo "✅ Automatik aktiv: ESP32 anstecken genügt ab jetzt."
+  echo "   Ausschalten mit:  bash mac/setup.sh --remove-auto"
+  exit 0
+fi
+if [ "$MODE" = remove ]; then
+  launchctl bootout "gui/$(id -u)/com.ooo.watch" 2>/dev/null
+  rm -f "$AGENT" && echo "✅ Automatik ausgeschaltet."
+  exit 0
+fi
+
 PY=$(command -v python3)
 python3 -c "import serial" 2>/dev/null || PY="$HOME/.local/pipx/venvs/platformio/bin/python3"
 [ -x "$PY" ] || { echo "❌ Python mit pyserial fehlt. Einmal ausführen:  pipx install platformio"; exit 1; }
+
+# Aktives Interface (fuer Wake-on-LAN) und WLAN-Interface (fuer die Netzliste)
+IFACE=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}'); IFACE=${IFACE:-en0}
+WIFI_IF=$(networksetup -listallhardwareports | awk '/Hardware Port: Wi-Fi/{getline; print $2}')
+WIFI_IF=${WIFI_IF:-en0}
 
 echo "== ESP32 suchen =="
 PORT=$(ls /dev/cu.usbserial-* /dev/cu.wchusbserial* /dev/cu.SLAB_USBtoUART* /dev/cu.usbmodem* 2>/dev/null | head -1)
 [ -n "$PORT" ] || { echo "❌ Kein ESP32 gefunden. Steckt er per USB am Mac? (Datenkabel, kein reines Ladekabel)"; exit 1; }
 echo "   gefunden: $PORT"
 
-echo "== WLANs suchen (der ESP32 scannt selbst, dauert ~15 s) =="
-"$PY" "$ROOT/mac/provision.py" scan "$PORT" > "$TMP/nets.txt" || { echo "❌ Scan fehlgeschlagen."; exit 1; }
-COUNT=$(wc -l < "$TMP/nets.txt" | tr -d ' ')
-echo "   $COUNT Netze gefunden (nur 2,4 GHz – mehr kann der ESP32 nicht), stärkstes zuerst:"
-nl -w6 -s'  ' "$TMP/nets.txt" | sed 's/^/   /'
+echo "== WLAN bestimmen =="
+# Der Mac verrät nicht, in welchem Netz er steckt (dafür bräuchte das Terminal die
+# Berechtigung für Ortungsdienste). Er verrät aber, welche Netze er kennt – und der ESP32
+# weiß, welche in Reichweite sind. Die Schnittmenge ist praktisch immer genau das richtige.
+"$PY" "$ROOT/mac/provision.py" scan "$PORT" > "$TMP/sichtbar.txt" || { echo "❌ Scan fehlgeschlagen."; exit 1; }
+networksetup -listpreferredwirelessnetworks "$WIFI_IF" 2>/dev/null | tail -n +2 | sed $'s/^[ \t]*//' > "$TMP/bekannt.txt"
+: > "$TMP/treffer.txt"
+while IFS= read -r n; do
+  [ -n "$n" ] && grep -Fxq "$n" "$TMP/sichtbar.txt" && echo "$n" >> "$TMP/treffer.txt"
+done < "$TMP/bekannt.txt"
 
-# Auswahlfenster. "activate" holt es nach vorn, sonst erscheint es hinter anderen Fenstern.
-echo "   → Auswahlfenster geöffnet (ggf. hinter diesem Fenster nachsehen)."
-SSID=$(OOO_NETS="$TMP/nets.txt" osascript <<'APPLESCRIPT' 2>/dev/null
+SSID=""
+if [ "$MODE" != waehlen ]; then
+  SSID=$(head -1 "$TMP/treffer.txt")
+  if [ -n "$SSID" ]; then
+    N=$(wc -l < "$TMP/treffer.txt" | tr -d ' ')
+    echo "   automatisch gewählt: $SSID"
+    [ "$N" -gt 1 ] && echo "   ($N bekannte Netze in Reichweite, das oberste aus der Mac-Reihenfolge gewinnt; 'bash mac/setup.sh --waehlen' für die Liste)"
+  fi
+fi
+
+if [ -z "$SSID" ]; then
+  echo "   Kein bekanntes Netz in Reichweite – bitte auswählen. Sichtbar sind:"
+  nl -w6 -s'  ' "$TMP/sichtbar.txt" | sed 's/^/   /'
+  SSID=$(OOO_NETS="$TMP/sichtbar.txt" osascript <<'APPLESCRIPT' 2>/dev/null
 set f to POSIX file (system attribute "OOO_NETS")
 set t to read f as «class utf8»
 set AppleScript's text item delimiters to linefeed
@@ -41,24 +86,10 @@ if c is false then return ""
 return item 1 of c
 APPLESCRIPT
 )
-
-# Falls das Fenster nicht kam oder abgebrochen wurde: Nummer aus der Liste eintippen.
-if [ -z "$SSID" ]; then
-  NUM=$(osascript <<'APPLESCRIPT' 2>/dev/null
-tell application "System Events"
-    activate
-    display dialog "Nummer des WLANs aus der Liste im Terminal:" default answer "1" with title "ooo einrichten"
-end tell
-return text returned of result
-APPLESCRIPT
-)
-  [ -n "$NUM" ] && SSID=$(sed -n "${NUM}p" "$TMP/nets.txt")
 fi
 [ -n "$SSID" ] || { echo "❌ Kein WLAN ausgewählt."; exit 1; }
-echo "   gewählt: $SSID"
 
 echo "== Daten vom Mac =="
-IFACE=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}'); IFACE=${IFACE:-en0}
 MAC=$(networksetup -getmacaddress "$IFACE" 2>/dev/null | awk '{print $3}')
 HOST=$(scutil --get LocalHostName)
 echo "   Mac: $HOST ($IFACE, $MAC)"
@@ -87,7 +118,11 @@ else
 fi
 
 echo "== Mac fürs Aufwecken vorbereiten =="
-if sudo -n pmset -a womp 1 2>/dev/null \
+if [ "$(pmset -g | awk '/womp/{print $2}')" = "1" ]; then
+  echo "   Wake-on-LAN ist schon aktiv."
+elif [ "$MODE" = auto ]; then
+  echo "   ⚠️  Wake-on-LAN noch nicht aktiv. Einmal 'bash mac/setup.sh' von Hand ausführen."
+elif sudo -n pmset -a womp 1 2>/dev/null \
    || osascript -e 'do shell script "pmset -a womp 1" with administrator privileges' >/dev/null 2>&1; then
   echo "   Wake-on-LAN aktiviert."
 else
@@ -96,3 +131,4 @@ fi
 
 echo
 echo "Fertig. Der ESP32 braucht ab jetzt nur noch Strom, egal woher."
+[ -f "$AGENT" ] || echo "Tipp: 'bash mac/setup.sh --install-auto' – dann reicht künftig Anstecken, ohne Befehl."
