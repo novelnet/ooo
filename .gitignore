@@ -1,0 +1,16 @@
+# secrets (generated from 1Password templates, never committed)
+.env
+.env.*
+!.env.tpl
+firmware/include/secrets.h
+
+# tooling
+.idea/
+.DS_Store
+.pio/
+node_modules/
+api/supabase/.temp/
+api/supabase/.branches/
+
+# IDE-lokal
+.mcp.json
