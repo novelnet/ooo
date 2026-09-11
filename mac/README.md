@@ -10,7 +10,8 @@ Das Skript liest WLAN-Name, WLAN-Passwort (aus dem Schlüsselbund, fragt einmal 
 Passwort), den Namen des Macs und dessen MAC-Adresse aus und schickt alles über das Kabel an
 den ESP32. Zum Schluss aktiviert es Wake-on-LAN (`pmset womp 1`). Sonst läuft auf dem Mac nichts.
 
-Klappt es, leuchtet die LED am ESP32 dauerhaft.
+Klappt es, leuchtet die blaue LED am ESP32 dauerhaft. Die rote LED daneben ist die
+Betriebsanzeige (PWR) und leuchtet immer.
 
 ## Voraussetzungen für Wake-on-LAN bei Apple
 

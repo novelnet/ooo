@@ -35,20 +35,32 @@ static uint32_t g_lastOkMs = 0;
 static uint32_t g_backoffMs = BACKOFF_MIN_MS;
 
 // ---------------------------------------------------------------------------
-// LED:  dauerhaft an = WLAN verbunden · schnell = verbindet
-//       langsam = wartet auf Einrichtung per USB · 3× kurz = Relay nicht erreichbar
+// LED. Die rote LED des DevKits haengt fest am Strom und leuchtet immer; steuerbar ist
+// nur die blaue an GPIO 2. Deshalb: blau aus = nur rot sichtbar = noch nicht bereit.
+//
+//   nur rot (blau aus)   wartet auf Einrichtung per USB
+//   blau blinkt          arbeitet gerade (verbindet, weckt den Mac)
+//   blau dauerhaft an    bereit und verbunden
+//   blau Doppelblitz     Fehler (WLAN falsch oder Relay nicht erreichbar)
 // ---------------------------------------------------------------------------
-enum LedMode { LED_OFF, LED_ON, LED_FAST, LED_SLOW };
-static LedMode g_led = LED_OFF;
-static void led(bool on) { digitalWrite(LED_PIN, on ? HIGH : LOW); }
-static void ledMode(LedMode m) { g_led = m; if (m == LED_ON) led(true); if (m == LED_OFF) led(false); }
+enum LedMode { LED_IDLE, LED_WORKING, LED_READY, LED_ERROR };
+static LedMode g_led = LED_IDLE;
+
+static void ledMode(LedMode m) { g_led = m; }
+
 static void ledTick() {
-  if (g_led == LED_FAST) led((millis() / 100) % 2);
-  if (g_led == LED_SLOW) led((millis() / 500) % 2);
-}
-static void blink(int times, int ms = 80) {
-  for (int i = 0; i < times; i++) { led(true); delay(ms); led(false); delay(ms); }
-  ledMode(g_led);
+  bool on = false;
+  switch (g_led) {
+    case LED_IDLE:    on = false; break;
+    case LED_READY:   on = true;  break;
+    case LED_WORKING: on = (millis() % 400) < 200; break;              // gleichmaessiges Blinken
+    case LED_ERROR: {                                                   // zwei kurze Blitze, Pause
+      uint32_t t = millis() % 1500;
+      on = (t < 120) || (t >= 300 && t < 420);
+      break;
+    }
+  }
+  digitalWrite(LED_PIN, on ? HIGH : LOW);
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +178,7 @@ static void waitTicking(uint32_t ms) {
 // ---------------------------------------------------------------------------
 static bool connectWifi() {
   if (g_ssid.isEmpty()) return false;
-  ledMode(LED_FAST);
+  ledMode(LED_WORKING);
   Serial.printf("[wifi] verbinde mit %s …\n", g_ssid.c_str());
   WiFi.disconnect(true);
   WiFi.mode(WIFI_STA);
@@ -177,10 +189,10 @@ static bool connectWifi() {
   while (WiFi.status() != WL_CONNECTED && millis() - start < 25000) waitTicking(50);
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WIFI FEHLER – Zugangsdaten pruefen (bash mac/setup.sh)");
-    ledMode(LED_SLOW);
+    ledMode(LED_ERROR);
     return false;
   }
-  ledMode(LED_ON);
+  ledMode(LED_READY);
   Serial.printf("WIFI OK %s ip=%s rssi=%d\n", g_ssid.c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
   MDNS.begin("ooo-esp");
   return true;
@@ -189,13 +201,13 @@ static bool connectWifi() {
 // Ohne Zugangsdaten: langsam blinken und auf die Einrichtung über USB warten.
 static void waitForSetup() {
   Serial.println("WARTE AUF EINRICHTUNG – ESP32 per USB an den Mac, dort: bash mac/setup.sh");
-  ledMode(LED_SLOW);
+  ledMode(LED_IDLE);
   while (g_ssid.isEmpty()) waitTicking(100);
 }
 
 static void ensureWifi() {
   if (g_reconnectRequested) { g_reconnectRequested = false; connectWifi(); return; }
-  if (WiFi.status() == WL_CONNECTED) { if (g_led != LED_ON) ledMode(LED_ON); return; }
+  if (WiFi.status() == WL_CONNECTED) { if (g_led == LED_ERROR) ledMode(LED_READY); return; }
   Serial.println("[wifi] Verbindung weg – neu verbinden");
   if (!connectWifi()) { waitForSetup(); connectWifi(); }
 }
@@ -292,17 +304,17 @@ static void ack(long id, const char* result) {
 static const char* execute(const char* action, JsonObjectConst payload) {
   if (strcmp(action, "wake") == 0) {
     Serial.println("[cmd] wake");
-    ledMode(LED_SLOW);
-    if (macReachable()) { ledMode(LED_ON); return "already-awake"; }
+    ledMode(LED_WORKING);
+    if (macReachable()) { ledMode(LED_READY); return "already-awake"; }
     bool sent = sendWol();
     if (RELAY_ENABLED) { relaySet(false); waitTicking(POWER_PULSE_MS); relaySet(true); }
-    if (!sent && !RELAY_ENABLED) { ledMode(LED_ON); return "no-mac-address-yet"; }
+    if (!sent && !RELAY_ENABLED) { ledMode(LED_ERROR); return "no-mac-address-yet"; }
     uint32_t until = millis() + WAKE_VERIFY_SEC * 1000UL;
     while (millis() < until) {
       waitTicking(2000);
-      if (macReachable()) { g_macReachable = true; ledMode(LED_ON); return "mac-up"; }
+      if (macReachable()) { g_macReachable = true; ledMode(LED_READY); return "mac-up"; }
     }
-    ledMode(LED_ON);
+    ledMode(LED_ERROR);
     return "no-ping-response";
   }
   if (strcmp(action, "power") == 0) {
@@ -321,13 +333,14 @@ static void pollOnce() {
 
   if (code != 200) {
     Serial.printf("[poll] http=%d – naechster Versuch in %lu ms\n", code, (unsigned long)g_backoffMs);
-    blink(3);
+    ledMode(LED_ERROR);
     waitTicking(g_backoffMs);
     g_backoffMs = min<uint32_t>(g_backoffMs * 2, BACKOFF_MAX_MS);
     return;
   }
   g_lastOkMs = millis();
   g_backoffMs = BACKOFF_MIN_MS;
+  ledMode(LED_READY);
 
   JsonDocument doc;
   if (deserializeJson(doc, resp)) return;
@@ -342,6 +355,8 @@ void setup() {
   delay(300);
   Serial.printf("\n\nooo firmware %s\n", FW_VERSION);
   pinMode(LED_PIN, OUTPUT);
+  ledMode(LED_IDLE);
+  ledTick();
   if (RELAY_ENABLED) { pinMode(RELAY_PIN, OUTPUT); relaySet(true); }
 
   loadPrefs();

@@ -50,3 +50,10 @@ Geräte hinweg – das gleiche Muster für alle weiteren Projekte.
 ## 7. FileVault bleibt an
 **Warum:** Ein gestohlenes MacBook mit allen Repos und Tokens wäre der eigentliche GAU. Preis:
 kein Kaltstart aus der Ferne. Regel: nur schlafen lassen, Neustart per `fdesetup authrestart`.
+
+## 10. Zustandsanzeige nur über die blaue LED
+**Warum:** Auf dem ESP32-DevKit ist die rote LED mit PWR beschriftet und fest mit der
+Stromversorgung verdrahtet – per Software nicht schaltbar (am 2026-09-11 gemessen: alle GPIOs
+durchgeschaltet, Rot blieb unverändert). Steuerbar ist nur Blau an GPIO 2. Deshalb bedeutet
+"blau aus" = nur Rot sichtbar = nicht bereit, und die übrigen Zustände unterscheiden sich über
+das Blinkmuster. Wer echte Farbwechsel will, löten eine zweite LED an einen freien GPIO.

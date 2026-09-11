@@ -17,14 +17,16 @@ einfach wieder anstecken und `bash mac/setup.sh` laufen lassen.
 
 ## LED
 
-| LED | Bedeutung |
-|---|---|
-| dauerhaft an | WLAN verbunden, alles gut |
-| schnelles Blinken | verbindet gerade |
-| langsames Blinken | wartet auf Einrichtung per USB (oder Wake läuft) |
-| 3× kurz | Relay nicht erreichbar, versucht es gleich wieder |
+Die rote LED ist mit **PWR** beschriftet und hängt fest am Strom – sie leuchtet immer, sobald
+der ESP32 versorgt ist, und lässt sich per Software nicht schalten. Steuerbar ist nur die blaue
+LED an GPIO 2. Der Zustand wird deshalb über Blau angezeigt, "blau aus" heißt: nur Rot sichtbar.
 
-Auf dem klassischen ESP32-DevKit ist das die blaue LED an GPIO 2.
+| Anzeige | Bedeutung |
+|---|---|
+| nur rot (blau aus) | noch nicht bereit, wartet auf Einrichtung per USB |
+| blau blinkt gleichmäßig | arbeitet gerade: verbindet sich oder weckt den Mac |
+| blau leuchtet dauerhaft | bereit, im WLAN, alles gut |
+| blau blinkt doppelt | Fehler: WLAN-Zugangsdaten falsch oder Relay nicht erreichbar |
 
 ## Befehle über USB (115200 Baud)
 
