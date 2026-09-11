@@ -1,12 +1,20 @@
 #!/bin/bash
-# Alle ooo-Secrets leben in 1Password (Vault "Dev", Item "ooo").
-#   scripts/secrets.sh init      Item mit frisch generierten Tokens anlegen (fragt WLAN/Project-Ref ab)
+# Alle ooo-Secrets leben in 1Password (privates Konto, Vault "Dev", Item "ooo").
+#   scripts/secrets.sh init      Item mit frisch generierten Tokens anlegen
 #   scripts/secrets.sh render    Template → firmware/include/secrets.h
 #   scripts/secrets.sh push      Tokens als Supabase Function Secrets setzen
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VAULT="${OOO_VAULT:-Dev}"; ITEM="ooo"
-command -v op >/dev/null || { echo "1Password CLI fehlt:  brew install --cask 1password-cli  (dann in der 1Password-App: Einstellungen → Entwickler → CLI-Integration)"; exit 1; }
+ACCOUNT="${OOO_OP_ACCOUNT:-my.1password.com}"   # es sind mehrere Konten registriert
+op() { command op --account "$ACCOUNT" "$@"; }
+
+command -v op >/dev/null || { echo "1Password CLI fehlt:  brew install --cask 1password-cli"; exit 1; }
+op whoami >/dev/null 2>&1 || {
+  echo "1Password ist nicht angemeldet. App entsperren, dann:  op signin --account $ACCOUNT"
+  echo "(Einstellungen → Entwickler → 'Mit 1Password-CLI integrieren' muss an sein.)"
+  exit 1
+}
 
 case "${1:-}" in
   init)

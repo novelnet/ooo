@@ -8,8 +8,12 @@ dass ein Agent auf dem Mac an Touch ID scheitert.
 ```bash
 brew install --cask 1password-cli
 # 1Password-App → Einstellungen → Entwickler → „Mit 1Password CLI integrieren“ aktivieren
-op whoami        # fragt beim ersten Mal per Touch ID / Passwort
+op signin --account my.1password.com   # einmalig, Freigabe per Touch ID
+op whoami --account my.1password.com
 ```
+
+Es sind zwei Konten registriert (privat + Firma). `scripts/secrets.sh` nutzt deshalb immer
+das private; überschreibbar mit `OOO_OP_ACCOUNT=…`.
 
 ## 2. Muster für jedes Projekt: Template + `op inject`
 
