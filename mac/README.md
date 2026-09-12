@@ -13,10 +13,11 @@ Der ESP32 hängt dauerhaft am USB-Anschluss des MacBooks. Damit
 - bekommt er weiter Strom, auch wenn der Mac schläft (USB-Anschlüsse liefern im Schlaf Strom),
 - und bekommt er bei **jedem WLAN-Wechsel** automatisch die neuen Zugangsdaten.
 
-Das erledigt der Hintergrunddienst aus `--install-auto`. Er sieht alle zehn Sekunden nach, ob
-sich etwas geändert hat, und erkennt einen Netzwechsel am Standard-Gateway und dessen
-MAC-Adresse – nicht am WLAN-Namen, denn den gibt macOS ohne Ortungsdienste-Berechtigung nicht
-heraus. Protokoll: `/tmp/ooo-watch.log`, abschalten mit `--remove-auto`.
+Das erledigt der Hintergrunddienst aus `--install-auto`. macOS weckt ihn bei jedem Netzwechsel
+direkt, weil er `/var/run/resolv.conf` beobachtet; zusätzlich schaut er einmal pro Minute nach,
+als Rückfallebene. Einen Netzwechsel erkennt er am Standard-Gateway, dessen MAC-Adresse und der
+eigenen Adresse – nicht am WLAN-Namen, denn den gibt macOS ohne Ortungsdienste-Berechtigung
+nicht heraus. Protokoll: `/tmp/ooo-watch.log`, abschalten mit `--remove-auto`.
 
 ## Was beim Einrichten passiert
 

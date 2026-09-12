@@ -5,7 +5,14 @@
   <key>Label</key><string>com.ooo.watch</string>
   <key>ProgramArguments</key>
   <array><string>/bin/bash</string><string>__OOO_DIR__/watch.sh</string></array>
-  <key>StartInterval</key><integer>10</integer>
+
+  <!-- macOS schreibt diese Datei bei jedem Netzwechsel neu: sofortige Reaktion, ohne zu pollen. -->
+  <key>WatchPaths</key>
+  <array><string>/var/run/resolv.conf</string></array>
+
+  <!-- Rückfallebene, falls die Beobachtung einmal nicht auslöst. Eine Minute genügt völlig. -->
+  <key>StartInterval</key><integer>60</integer>
+
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>/tmp/ooo-watch.log</string>
   <key>StandardErrorPath</key><string>/tmp/ooo-watch.log</string>

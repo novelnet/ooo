@@ -22,4 +22,4 @@
 #define BACKOFF_MIN_MS     5000
 #define BACKOFF_MAX_MS     60000
 #define REBOOT_AFTER_OFFLINE_MS (10UL * 60UL * 1000UL)
-#define FW_VERSION         "0.6.0"
+#define FW_VERSION         "0.8.0"

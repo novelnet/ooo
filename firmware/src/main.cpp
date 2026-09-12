@@ -12,7 +12,6 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <WiFiUdp.h>
-#include <HTTPClient.h>
 #include <ESPmDNS.h>
 #include <ESP32Ping.h>
 #include <Preferences.h>
@@ -46,6 +45,12 @@ static bool     g_powered = true;
 static uint32_t g_lastOkMs = 0;
 static uint32_t g_backoffMs = BACKOFF_MIN_MS;
 static uint8_t  g_lastDisconnectReason = 0;
+
+// Client und Verbindung bleiben bestehen. Der Aufbau einer verschluesselten Verbindung ist
+// der mit Abstand teuerste Teil – auf dem ESP32 (Rechenzeit, also Strom) und beim Server.
+// Bei rund 3.500 Abfragen am Tag lohnt sich das Offenhalten deutlich.
+static WiFiClientSecure g_tls;
+static bool             g_tlsReady = false;
 
 // ---------------------------------------------------------------------------
 // LED:  aus = nicht bereit · blinkt = arbeitet · an = bereit · Doppelblitz = Fehler
@@ -255,7 +260,9 @@ static bool connectWifi() {
   if (g_netCount == 0) return false;
   ledMode(LED_WORKING);
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
+  // Stromsparmodus des Funkmoduls an: halbiert den Ruheverbrauch. Kostet beim Empfang
+  // hoechstens ein DTIM-Intervall (~100-300 ms) – bei unserem Wartemuster ohne Bedeutung.
+  WiFi.setSleep(true);
   WiFi.setHostname("ooo-esp");
   g_current = -1;
 
@@ -292,6 +299,7 @@ static void waitForSetup() {
 static void ensureWifi() {
   if (WiFi.status() == WL_CONNECTED) { if (g_led == LED_ERROR) ledMode(LED_READY); return; }
   Serial.println("[wifi] Verbindung weg – neu verbinden");
+  g_tls.stop();                          // alte Verbindung gehoert zum alten Netz
   if (!connectWifi()) {
     if (g_netCount == 0) { waitForSetup(); connectWifi(); }
     else waitTicking(10000);
@@ -417,19 +425,117 @@ static void handleSerial() {
 // ---------------------------------------------------------------------------
 // HTTP zur ooo-Cloud
 // ---------------------------------------------------------------------------
+// Minimaler HTTP/1.1-Client direkt auf der verschluesselten Verbindung.
+// Absichtlich ohne HTTPClient: die Bibliothek setzt bei jedem Aufruf neu an, dadurch wurde
+// die Verbindung rund 3.500 Mal am Tag neu ausgehandelt. Das ist der teuerste Teil.
+// Hier bleibt sie offen; nur bei Abbruch wird neu verbunden.
+static String apiHost() {
+  static String host;
+  if (host.length()) return host;
+  host = String(OOO_URL);
+  host.replace("https://", "");
+  int slash = host.indexOf('/');
+  if (slash >= 0) host = host.substring(0, slash);
+  return host;
+}
+
+// Lesen mit eigener Zeitgrenze. setTimeout() ist hier unbrauchbar: auf einer
+// verschluesselten Verbindung schlaegt es fehl ("Bad file number") und die Einheit
+// (Sekunden oder Millisekunden) unterscheidet sich je nach Core-Version.
+static int readByte(uint32_t deadline) {
+  while ((int32_t)(millis() - deadline) < 0) {
+    int c = g_tls.read();
+    if (c >= 0) return c;
+    if (!g_tls.connected() && !g_tls.available()) return -1;
+    ledTick();
+    delay(2);
+  }
+  return -1;
+}
+
+static bool readLine(String& out, uint32_t deadline) {
+  out = "";
+  while (true) {
+    int c = readByte(deadline);
+    if (c < 0) return false;
+    if (c == '\n') return true;
+    if (c != '\r') out += (char)c;
+    if (out.length() > 1024) return false;
+  }
+}
+
+// Antwort lesen: Statuszeile, Kopfzeilen, Rumpf. Gibt den Statuscode zurueck, sonst -1.
+static int readResponse(String& response, bool& keepAlive, uint32_t deadline) {
+  keepAlive = true;
+  String line;
+  if (!readLine(line, deadline) || !line.startsWith("HTTP/1.")) return -1;
+  int code = line.substring(9, 12).toInt();
+
+  long length = -1;
+  bool chunked = false;
+  while (readLine(line, deadline)) {
+    if (line.isEmpty()) break;                        // Leerzeile: Kopf zu Ende
+    String lower = line;
+    lower.toLowerCase();
+    if (lower.startsWith("content-length:")) length = line.substring(15).toInt();
+    else if (lower.startsWith("connection:") && lower.indexOf("close") >= 0) keepAlive = false;
+    else if (lower.startsWith("transfer-encoding:") && lower.indexOf("chunked") >= 0) chunked = true;
+  }
+
+  response = "";
+  if (chunked) {
+    while (true) {
+      if (!readLine(line, deadline)) return -1;
+      long n = strtol(line.c_str(), nullptr, 16);
+      if (n <= 0) { readLine(line, deadline); break; }
+      while (n-- > 0) {
+        int c = readByte(deadline);
+        if (c < 0) return -1;
+        response += (char)c;
+      }
+      readLine(line, deadline);                       // CRLF nach dem Block
+    }
+  } else if (length > 0) {
+    response.reserve(length);
+    while (length-- > 0) {
+      int c = readByte(deadline);
+      if (c < 0) return -1;
+      response += (char)c;
+    }
+  }
+  return code;
+}
+
+static int requestOnce(const char* path, const String& body, String& response, uint32_t timeoutMs) {
+  uint32_t deadline = millis() + timeoutMs;
+  if (!g_tls.connected()) {
+    if (!g_tlsReady) { g_tls.setCACert(ISRG_ROOTS); g_tls.setHandshakeTimeout(20); g_tlsReady = true; }
+    if (!g_tls.connect(apiHost().c_str(), 443)) return -1;
+    Serial.println("[tls] neue Verbindung aufgebaut");
+  }
+
+  g_tls.print(String("POST ") + path + " HTTP/1.1\r\n");
+  g_tls.print("Host: " + apiHost() + "\r\n");
+  g_tls.print("Authorization: Bearer " OOO_DEVICE_TOKEN "\r\n");
+  g_tls.print("Content-Type: application/json\r\n");
+  g_tls.print("Connection: keep-alive\r\n");
+  g_tls.print("Content-Length: " + String(body.length()) + "\r\n\r\n");
+  g_tls.print(body);
+
+  bool keepAlive = true;
+  int code = readResponse(response, keepAlive, deadline);
+  if (code < 0 || !keepAlive) g_tls.stop();
+  return code;
+}
+
 static int request(const char* path, const String& body, String& response, uint32_t timeoutMs) {
-  WiFiClientSecure client;
-  client.setCACert(ISRG_ROOTS);
-  client.setTimeout(timeoutMs / 1000);
-  HTTPClient http;
-  http.setTimeout(timeoutMs);
-  http.setReuse(false);
-  if (!http.begin(client, String(OOO_URL) + path)) return -1;
-  http.addHeader("Authorization", String("Bearer ") + OOO_DEVICE_TOKEN);
-  http.addHeader("Content-Type", "application/json");
-  int code = http.POST(body);
-  if (code > 0) response = http.getString();
-  http.end();
+  int code = requestOnce(path, body, response, timeoutMs);
+  // Eine offene Verbindung kann zwischenzeitlich vom Server geschlossen worden sein.
+  // Dann genau einmal mit frischer Verbindung wiederholen.
+  if (code < 0) {
+    g_tls.stop();
+    code = requestOnce(path, body, response, timeoutMs);
+  }
   return code;
 }
 

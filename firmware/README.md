@@ -63,6 +63,22 @@ macOS pro WLAN vergibt und gelegentlich wechselt. Der ESP32 bekommt sie auf zwei
 Er behält je Netz die letzten drei Adressen und schickt das Weckpaket an alle. Damit wirkt ein
 Wechsel der privaten Adresse nicht sofort wie ein Ausfall.
 
+## Sparsamkeit
+
+- **Die verschlüsselte Verbindung bleibt offen.** Sie neu auszuhandeln ist der mit Abstand
+  teuerste Teil – für den ESP32 (Rechenzeit, also Strom) und für den Server. Statt rund 3.500
+  Mal am Tag wird sie nur noch bei einem Abbruch neu aufgebaut. Dafür steht hier ein eigener,
+  minimaler HTTP-Client statt `HTTPClient`: die Bibliothek setzte bei jedem Aufruf neu an.
+  Gemessen: zwei Minuten Betrieb, eine Verbindung statt fünf.
+- **Stromsparmodus des Funkmoduls ist an** (`WiFi.setSleep(true)`). Halbiert den Ruheverbrauch
+  und kostet beim Empfang höchstens ein DTIM-Intervall.
+- Der ESP32 hängt am USB-Anschluss des MacBooks und zieht im Akkubetrieb aus dessen Akku.
+  Deshalb zählt jedes Milliampere.
+
+Beim Lesen der Antwort wird eine eigene Zeitgrenze mitgeführt. `setTimeout()` ist auf einer
+verschlüsselten Verbindung unbrauchbar – es meldet „Bad file number", und je nach Core-Version
+gilt die Angabe in Sekunden oder Millisekunden.
+
 ## Sicherheit
 
 - Root-CA gepinnt (ISRG Root X1, bis 2035), kein `setInsecure()`.
